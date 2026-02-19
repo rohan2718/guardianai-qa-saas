@@ -1,0 +1,1301 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Guardian AI | Dashboard</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+    <style>
+      :root {
+        --primary: #6366f1;
+        --secondary: #ec4899;
+        --accent: #8b5cf6;
+        --bg-body: #f0f4f8;
+        --text-main: #0f172a;
+        --text-muted: #64748b;
+        --border: #e2e8f0;
+        --success: #10b981;
+        --danger: #ef4444;
+        --warning: #f59e0b;
+        --card-bg: #ffffff;
+        --font-main: "Inter", sans-serif;
+        --font-code: "JetBrains Mono", monospace;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        outline: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      body {
+        font-family: var(--font-main);
+        background: var(--bg-body);
+        color: var(--text-main);
+        height: 100vh;
+        overflow: hidden;
+        display: flex;
+        background-image:
+          radial-gradient(
+            circle at 5% 10%,
+            rgba(99, 102, 241, 0.07) 0%,
+            transparent 30%
+          ),
+          radial-gradient(
+            circle at 95% 90%,
+            rgba(236, 72, 153, 0.07) 0%,
+            transparent 30%
+          );
+      }
+
+      ::-webkit-scrollbar {
+        width: 5px;
+        height: 5px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 10px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: var(--primary);
+      }
+
+      /* ── Layout ─────────────────────────────────── */
+      .main-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        overflow: hidden;
+      }
+
+      .topbar {
+        height: 64px;
+        background: rgba(255, 255, 255, 0.92);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        flex-shrink: 0;
+        gap: 16px;
+      }
+      .topbar-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .hamburger-btn {
+        display: none;
+        background: none;
+        border: none;
+        font-size: 18px;
+        color: var(--text-main);
+        cursor: pointer;
+        padding: 6px;
+        border-radius: 6px;
+        transition: background 0.15s;
+      }
+      .hamburger-btn:hover {
+        background: #f1f5f9;
+      }
+      .topbar-title {
+        font-size: 17px;
+
+        color: var(--text-main);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .topbar-title i {
+        color: var(--primary);
+        font-size: 16px;
+      }
+
+      .content-scroll {
+        flex: 1;
+        overflow-y: auto;
+        padding: 24px;
+      }
+      .container-width {
+        max-width: 1360px;
+        margin: 0 auto;
+      }
+
+      /* ── Cards ──────────────────────────────────── */
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 20px;
+        box-shadow: var(--shadow-sm);
+      }
+
+      /* ── Workspace Banner ───────────────────────── */
+      .workspace-banner {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 18px;
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        margin-bottom: 20px;
+      }
+      .workspace-icon {
+        width: 36px;
+        height: 36px;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 14px;
+        flex-shrink: 0;
+        box-shadow: 0 4px 10px rgba(99, 102, 241, 0.25);
+      }
+      .workspace-info {
+        flex: 1;
+        min-width: 0;
+      }
+      .workspace-name {
+        font-size: 14px;
+
+        color: var(--text-main);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .plan-badge {
+        background: rgba(99, 102, 241, 0.1);
+        color: var(--primary);
+        font-size: 10px;
+
+        padding: 2px 8px;
+        border-radius: 20px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .workspace-meta {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+
+      /* ── Stat Grid ──────────────────────────────── */
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+      .stat-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 18px;
+        box-shadow: var(--shadow-sm);
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .stat-body {
+        flex: 1;
+        min-width: 0;
+      }
+      .stat-val {
+        font-size: 26px;
+        
+        color: var(--text-main);
+        font-family: var(--font-code);
+        line-height: 1;
+        margin-bottom: 4px;
+      }
+      .stat-lbl {
+        font-size: 12px;
+        
+        color: var(--text-muted);
+      }
+      .stat-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 15px;
+        flex-shrink: 0;
+      }
+
+      /* ── Score Row ──────────────────────────────── */
+      .score-row {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+      .score-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 18px 12px;
+        box-shadow: var(--shadow-sm);
+        text-align: center;
+      }
+      .donut-wrap {
+        position: relative;
+        width: 76px;
+        height: 76px;
+        margin: 0 auto 10px;
+      }
+      .donut-center {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      .donut-num {
+        font-size: 17px;
+        
+        font-family: var(--font-code);
+        line-height: 1;
+      }
+      .donut-sub {
+        font-size: 9px;
+        color: var(--text-muted);
+      }
+      .score-label {
+        font-size: 11px;
+
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      /* ── Charts Row ─────────────────────────────── */
+      .charts-row {
+        display: grid;
+        grid-template-columns: 3fr 2fr;
+        gap: 16px;
+        margin-bottom: 20px;
+      }
+      .chart-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 20px;
+        box-shadow: var(--shadow-sm);
+      }
+      .card-heading {
+        font-size: 13px;
+
+        color: var(--text-main);
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 16px;
+      }
+      .card-heading i {
+        color: var(--primary);
+      }
+
+      /* ── Issues Row ─────────────────────────────── */
+      .issues-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin-bottom: 20px;
+      }
+      .issue-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 16px;
+        box-shadow: var(--shadow-sm);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .issue-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        flex-shrink: 0;
+      }
+      .issue-val {
+        font-size: 22px;
+        
+        font-family: var(--font-code);
+        line-height: 1;
+      }
+      .issue-lbl {
+        font-size: 11px;
+        
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+
+      /* ── Table ──────────────────────────────────── */
+      .table-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        margin-bottom: 0;
+      }
+      .table-card-header {
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      thead th {
+        background: #f8fafc;
+        padding: 10px 16px;
+        font-size: 11px;
+
+        color: var(--text-muted);
+        text-transform: uppercase;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+        letter-spacing: 0.4px;
+        position: sticky;
+        top: 0;
+        z-index: 5;
+      }
+      .table-scroll-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      /* ── Pagination ─────────────────────────────── */
+      .pagination-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 20px;
+        border-top: 1px solid var(--border);
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pagination-info {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .pagination-btns {
+        display: flex;
+        gap: 4px;
+      }
+      .pg-btn {
+        min-width: 30px;
+        height: 30px;
+        border: 1.5px solid var(--border);
+        background: var(--card-bg);
+        border-radius: 6px;
+        font-size: 12px;
+        
+        color: var(--text-muted);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s;
+        padding: 0 8px;
+      }
+      .pg-btn:hover:not(:disabled) {
+        border-color: var(--primary);
+        color: var(--primary);
+      }
+      .pg-btn.active {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: white;
+      }
+      .pg-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+      }
+
+      /* ── Delete button in table ──────────────────── */
+      .del-run-btn {
+        width: 28px;
+        height: 28px;
+        border: 1px solid #fecaca;
+        border-radius: 6px;
+        background: white;
+        color: #ef4444;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        transition: all 0.15s;
+        opacity: 0;
+      }
+      tr:hover .del-run-btn {
+        opacity: 1;
+      }
+      .del-run-btn:hover {
+        background: #fee2e2;
+        border-color: #ef4444;
+      }
+
+      /* ── Delete modal ───────────────────────────── */
+      .delete-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.6);
+        backdrop-filter: blur(8px);
+        z-index: 200;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.25s;
+        padding: 20px;
+      }
+      .delete-modal-overlay.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .delete-modal-box {
+        background: white;
+        border-radius: 18px;
+        padding: 28px 30px;
+        max-width: 420px;
+        width: 100%;
+        box-shadow: 0 20px 50px -8px rgba(0, 0, 0, 0.3);
+        transform: scale(0.93) translateY(12px);
+        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        text-align: center;
+      }
+      .delete-modal-overlay.open .delete-modal-box {
+        transform: scale(1) translateY(0);
+      }
+      .delete-modal-icon {
+        width: 52px;
+        height: 52px;
+        background: #fee2e2;
+        border-radius: 14px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        color: var(--danger);
+        margin: 0 auto 16px;
+      }
+      .delete-modal-box h3 {
+        font-size: 18px;
+        
+        color: var(--text-main);
+        margin-bottom: 8px;
+      }
+      .delete-modal-box p {
+        font-size: 13px;
+        color: var(--text-muted);
+        line-height: 1.6;
+        margin-bottom: 22px;
+      }
+      .delete-modal-url {
+        font-family: var(--font-code);
+        font-size: 11px;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        color: var(--text-main);
+        word-break: break-all;
+        margin-bottom: 22px;
+        display: block;
+        text-align: left;
+      }
+      .delete-modal-actions {
+        display: flex;
+        gap: 10px;
+      }
+      .dm-cancel-btn {
+        flex: 1;
+        padding: 11px;
+        border: 1.5px solid var(--border);
+        border-radius: 10px;
+        background: white;
+        color: var(--text-main);
+        font-size: 14px;
+        
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .dm-cancel-btn:hover {
+        background: #f8fafc;
+      }
+      .dm-confirm-btn {
+        flex: 1;
+        padding: 11px;
+        border: none;
+        border-radius: 10px;
+        background: var(--danger);
+        color: white;
+        font-size: 14px;
+        
+        cursor: pointer;
+        transition: all 0.15s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+      }
+      .dm-confirm-btn:hover {
+        background: #dc2626;
+      }
+      .dm-confirm-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      tbody tr {
+        border-bottom: 1px solid #f1f5f9;
+        transition: background 0.1s;
+      }
+      tbody tr:last-child {
+        border-bottom: none;
+      }
+      tbody tr:hover {
+        background: #fafbfc;
+      }
+      td {
+        padding: 12px 16px;
+        font-size: 13px;
+        color: var(--text-main);
+      }
+      .td-url {
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: block;
+        font-size: 12px;
+        color: var(--text-muted);
+        font-family: var(--font-code);
+      }
+
+      /* ── Status Badges ──────────────────────────── */
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 9px;
+        border-radius: 20px;
+        font-size: 11px;
+      }
+      .status-badge.completed {
+        background: rgba(16, 185, 129, 0.1);
+        color: var(--success);
+      }
+      .status-badge.running {
+        background: rgba(99, 102, 241, 0.1);
+        color: var(--primary);
+      }
+      .status-badge.failed {
+        background: rgba(239, 68, 68, 0.1);
+        color: var(--danger);
+      }
+
+      .view-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 11px;
+        background: rgba(99, 102, 241, 0.07);
+        color: var(--primary);
+        border-radius: var(--radius-sm);
+        font-size: 12px;
+
+        text-decoration: none;
+        transition:
+          background 0.15s,
+          color 0.15s;
+        white-space: nowrap;
+      }
+      .view-btn:hover {
+        background: var(--primary);
+        color: white;
+      }
+
+      /* ── Empty State ────────────────────────────── */
+      .empty-state {
+        text-align: center;
+        padding: 56px 24px;
+        color: var(--text-muted);
+      }
+      .empty-state i {
+        font-size: 38px;
+        margin-bottom: 14px;
+        opacity: 0.25;
+        display: block;
+      }
+      .empty-state h3 {
+        font-size: 15px;
+
+        color: var(--text-main);
+        margin-bottom: 6px;
+      }
+      .empty-state p {
+        font-size: 13px;
+      }
+
+      /* ── Responsive ─────────────────────────────── */
+      @media (max-width: 1100px) {
+        .score-row {
+          grid-template-columns: repeat(3, 1fr);
+        }
+        .stats-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .charts-row {
+          grid-template-columns: 1fr;
+        }
+        .issues-row {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      @media (max-width: 768px) {
+        .hamburger-btn {
+          display: block;
+        }
+        .content-scroll {
+          padding: 16px;
+        }
+        .stats-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .score-row {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .issues-row {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .workspace-banner {
+          flex-wrap: wrap;
+        }
+        td,
+        th {
+          padding: 10px 12px;
+        }
+      }
+      @media (max-width: 480px) {
+        .stats-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+        .score-row {
+          grid-template-columns: 1fr 1fr;
+        }
+        .issues-row {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    {% include "partials/sidebar.html" %}
+
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="hamburger-btn" onclick="toggleSidebar()">
+            <i class="fa-solid fa-bars"></i>
+          </button>
+          <div class="topbar-title">
+            <i class="fa-solid fa-chart-pie"></i>
+            Analytics Dashboard
+          </div>
+        </div>
+      </header>
+
+      <div class="content-scroll">
+        <div class="container-width">
+          <!-- Workspace Banner -->
+          <div class="workspace-banner">
+            <div class="workspace-icon"><i class="fa-solid fa-bolt"></i></div>
+            <div class="workspace-info">
+              <div class="workspace-name">
+                {{ current_user.username }}'s Workspace
+                <span class="plan-badge">{{ plan }}</span>
+              </div>
+              <div class="workspace-meta">
+                {% if plan_limits.scans_per_day %} Up to {{
+                plan_limits.scans_per_day }} scans/day · {{
+                plan_limits.pages_per_scan or '∞' }} pages/scan · {{
+                plan_limits.history_days }} days history {% else %} Unlimited
+                scans · Unlimited pages · {{ plan_limits.history_days }} days
+                history {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <!-- Key Stats -->
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-body">
+                <div class="stat-val counter-num">{{ total_scans }}</div>
+                <div class="stat-lbl">Total Scans</div>
+              </div>
+              <div
+                class="stat-icon"
+                style="
+                  background: rgba(99, 102, 241, 0.1);
+                  color: var(--primary);
+                "
+              >
+                <i class="fa-solid fa-magnifying-glass"></i>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-body">
+                <div class="stat-val counter-num">{{ total_pages }}</div>
+                <div class="stat-lbl">Pages Scanned</div>
+              </div>
+              <div
+                class="stat-icon"
+                style="
+                  background: rgba(16, 185, 129, 0.1);
+                  color: var(--success);
+                "
+              >
+                <i class="fa-solid fa-file-lines"></i>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-body">
+                <div class="stat-val counter-num">
+                  {{ avg_health|int if avg_health else 0 }}
+                </div>
+                <div class="stat-lbl">Avg Health Score</div>
+              </div>
+              <div
+                class="stat-icon"
+                style="
+                  background: rgba(245, 158, 11, 0.1);
+                  color: var(--warning);
+                "
+              >
+                <i class="fa-solid fa-heart-pulse"></i>
+              </div>
+            </div>
+            <div class="stat-card" style="border-top: 3px solid var(--accent)">
+              <div class="stat-body">
+                <div class="stat-val counter-num" style="color: var(--accent)">
+                  {{ avg_confidence|int if avg_confidence else 0 }}
+                </div>
+                <div class="stat-lbl">Avg Confidence %</div>
+              </div>
+              <div
+                class="stat-icon"
+                style="
+                  background: rgba(139, 92, 246, 0.1);
+                  color: var(--accent);
+                "
+              >
+                <i class="fa-solid fa-shield-check"></i>
+              </div>
+            </div>
+          </div>
+
+          <!-- Category Score Donuts -->
+          <div class="score-row">
+            {% set score_cards = [ ('Performance', avg_performance, '#6366f1'),
+            ('Accessibility', avg_accessibility, '#10b981'), ('Security',
+            avg_security, '#f59e0b'), ('Functional', avg_functional, '#ec4899'),
+            ('UI / Form', None, '#3b82f6') ] %} {% for label, score, color in
+            score_cards %}
+            <div class="score-card">
+              <div class="donut-wrap">
+                <canvas
+                  id="donut-{{ loop.index }}"
+                  width="76"
+                  height="76"
+                  data-val="{{ score|int if score else 0 }}"
+                  data-color="{{ color }}"
+                ></canvas>
+                <div class="donut-center">
+                  <div class="donut-num" style="color: {{ color }};">
+                    {{ score|int if score else '—' }}
+                  </div>
+                  <div class="donut-sub">/ 100</div>
+                </div>
+              </div>
+              <div class="score-label">{{ label }}</div>
+            </div>
+            {% endfor %}
+          </div>
+
+          <!-- Charts -->
+          <div class="charts-row">
+            <div class="chart-card">
+              <div class="card-heading">
+                <i class="fa-solid fa-chart-line"></i> Score Trends
+              </div>
+              <div style="position: relative; height: 200px">
+                <canvas id="trendChart"></canvas>
+              </div>
+            </div>
+            <div class="chart-card">
+              <div class="card-heading">
+                <i class="fa-solid fa-chart-pie"></i> Page Health Distribution
+              </div>
+              <div style="position: relative; height: 200px">
+                <canvas id="distChart"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Issue Counts -->
+          <div class="issues-row">
+            <div class="issue-card">
+              <div
+                class="issue-icon"
+                style="
+                  background: rgba(16, 185, 129, 0.1);
+                  color: var(--success);
+                "
+              >
+                <i class="fa-solid fa-universal-access"></i>
+              </div>
+              <div>
+                <div class="issue-val" style="color: var(--success)">
+                  {{ total_a11y_issues }}
+                </div>
+                <div class="issue-lbl">A11y Issues</div>
+              </div>
+            </div>
+            <div class="issue-card">
+              <div
+                class="issue-icon"
+                style="background: rgba(239, 68, 68, 0.1); color: var(--danger)"
+              >
+                <i class="fa-solid fa-link-slash"></i>
+              </div>
+              <div>
+                <div class="issue-val" style="color: var(--danger)">
+                  {{ total_broken_links }}
+                </div>
+                <div class="issue-lbl">Broken Links</div>
+              </div>
+            </div>
+            <div class="issue-card">
+              <div
+                class="issue-icon"
+                style="
+                  background: rgba(245, 158, 11, 0.1);
+                  color: var(--warning);
+                "
+              >
+                <i class="fa-solid fa-triangle-exclamation"></i>
+              </div>
+              <div>
+                <div class="issue-val" style="color: var(--warning)">
+                  {{ total_js_errors }}
+                </div>
+                <div class="issue-lbl">JS Errors</div>
+              </div>
+            </div>
+            <div class="issue-card">
+              <div
+                class="issue-icon"
+                style="
+                  background: rgba(99, 102, 241, 0.1);
+                  color: var(--primary);
+                "
+              >
+                <i class="fa-solid fa-gauge"></i>
+              </div>
+              <div>
+                <div class="issue-val" style="color: var(--primary)">
+                  {{ total_slow_pages }}
+                </div>
+                <div class="issue-lbl">Slow Pages</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Scans Table -->
+          <div class="table-card">
+            <div class="table-card-header">
+              <div class="card-heading" style="margin-bottom: 0">
+                <i class="fa-solid fa-clock-rotate-left"></i> Recent Scan Runs
+              </div>
+            </div>
+            <div class="table-scroll-wrap">
+              {% if recent_runs %}
+              <table id="runsTable">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Target URL</th>
+                    <th>Status</th>
+                    <th>Pages</th>
+                    <th>Health</th>
+                    <th>Confidence</th>
+                    <th>Risk</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="runsTableBody">
+                  {% for run in recent_runs %}
+                  <tr
+                    data-run-id="{{ run.id }}"
+                    data-run-url="{{ run.target_url }}"
+                  >
+                    <td>
+                      <span
+                        style="
+                          font-family: var(--font-code);
+                          color: var(--text-muted);
+                          font-size: 12px;
+                        "
+                        >#{{ run.id }}</span
+                      >
+                    </td>
+                    <td>
+                      <span class="td-url" title="{{ run.target_url }}"
+                        >{{ run.target_url }}</span
+                      >
+                    </td>
+                    <td>
+                      {% if run.status == 'completed' %}
+                      <span class="status-badge completed"
+                        ><i class="fa-solid fa-check"></i> Completed</span
+                      >
+                      {% elif run.status == 'running' %}
+                      <span class="status-badge running"
+                        ><i class="fa-solid fa-spinner fa-spin"></i>
+                        Running</span
+                      >
+                      {% else %}
+                      <span class="status-badge failed"
+                        ><i class="fa-solid fa-circle-xmark"></i> Failed</span
+                      >
+                      {% endif %}
+                    </td>
+                    <td style="font-family: var(--font-code)">
+                      {{ run.total_tests or '—' }}
+                    </td>
+                    <td>
+                      {% if run.site_health_score is not none %} {% set hs =
+                      run.site_health_score|float %}
+                      <span
+                        style="font-family: var(--font-code);  color: {% if hs>=75 %}var(--success){% elif hs>=50 %}var(--warning){% else %}var(--danger){% endif %}"
+                        >{{ hs|int }}</span
+                      >
+                      {% else %}—{% endif %}
+                    </td>
+                    <td>
+                      {% if run.confidence_score is not none %} {% set cs =
+                      run.confidence_score|float %}
+                      <span
+                        style="font-size: 11px;  padding: 3px 8px; border-radius: 20px; {% if cs >= 80 %}background: rgba(16,185,129,0.1); color: #059669;{% elif cs >= 50 %}background: rgba(245,158,11,0.1); color: #b45309;{% else %}background: rgba(239,68,68,0.1); color: #b91c1c;{% endif %}"
+                      >
+                        <i
+                          class="fa-solid fa-shield-check"
+                          style="margin-right: 3px"
+                        ></i
+                        >{{ cs|int }}%
+                      </span>
+                      {% else %}<span style="color: #94a3b8; font-size: 12px"
+                        >—</span
+                      >{% endif %}
+                    </td>
+                    <td style="font-size: 12px; color: var(--text-muted)">
+                      {{ run.risk_category or '—' }}
+                    </td>
+                    <td style="white-space: nowrap">
+                      <a href="/run/{{ run.id }}" class="view-btn"
+                        >View &rarr;</a
+                      >
+                      <button
+                        class="del-run-btn"
+                        data-run-id="{{ run.id }}" data-run-url="{{ run.target_url }}" onclick="openDeleteModal(this.dataset.runId, this.dataset.runUrl)"
+                        title="Delete this scan"
+                        aria-label="Delete scan #{{ run.id }}"
+                      >
+                        <i class="fa-solid fa-trash"></i>
+                      </button>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              <div
+                id="dashboardPagination"
+                class="pagination-bar"
+                style="display: none"
+              >
+                <div class="pagination-info" id="dashPgInfo"></div>
+                <div class="pagination-btns" id="dashPgBtns"></div>
+              </div>
+              {% else %}
+              <div class="empty-state">
+                <i class="fa-solid fa-inbox"></i>
+                <h3>No scans yet</h3>
+                <p>Run your first scan to see results here.</p>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Modal -->
+    <div id="deleteModal" class="delete-modal-overlay">
+      <div class="delete-modal-box">
+        <div class="delete-modal-icon">
+          <i class="fa-solid fa-trash-can"></i>
+        </div>
+        <h3>Delete Scan?</h3>
+        <p>
+          This will permanently remove all data, reports, and page results for
+          this scan.
+        </p>
+        <span class="delete-modal-url" id="deleteModalUrl">—</span>
+        <div class="delete-modal-actions">
+          <button class="dm-cancel-btn" onclick="closeDeleteModal()">
+            Cancel
+          </button>
+          <button
+            class="dm-confirm-btn"
+            id="dmConfirmBtn"
+            onclick="confirmDeleteScan()"
+          >
+            <i class="fa-solid fa-trash"></i> Delete Permanently
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Donut charts
+      document.querySelectorAll('[id^="donut-"]').forEach(function(canvas) {
+        var val = parseFloat(canvas.dataset.val) || 0;
+        var color = canvas.dataset.color || "#6366f1";
+        new Chart(canvas, {
+          type: "doughnut",
+          data: { datasets: [{ data: [val, 100 - val], backgroundColor: [color, "rgba(203,213,225,0.3)"], borderWidth: 0, borderRadius: 4 }] },
+          options: { responsive: false, cutout: "72%", plugins: { tooltip: { enabled: false } }, animation: { duration: 900, easing: "easeInOutCubic" } }
+        });
+      });
+
+      // Trend chart
+      var trendLabels = {{ trend_labels | safe | default('[]') }};
+      var trendHealth = {{ trend_health | safe | default('[]') }};
+      var trendPerf = {{ trend_perf | safe | default('[]') }};
+      var trendConfidence = {{ trend_confidence | safe | default('[]') }};
+
+      if (trendLabels.length > 0) {
+        new Chart(document.getElementById("trendChart"), {
+          type: "line",
+          data: {
+            labels: trendLabels,
+            datasets: [
+              { label: "Health", data: trendHealth, borderColor: "#6366f1", backgroundColor: "rgba(99,102,241,0.07)", tension: 0.4, fill: true, pointRadius: 3, pointHoverRadius: 5 },
+              { label: "Performance", data: trendPerf, borderColor: "#10b981", tension: 0.4, fill: false, borderDash: [4, 3], pointRadius: 3 },
+              { label: "Confidence", data: trendConfidence, borderColor: "#8b5cf6", tension: 0.4, fill: false, borderDash: [2, 4], borderWidth: 2, pointRadius: 3 }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+              y: { min: 0, max: 100, grid: { color: "rgba(203,213,225,0.3)" }, ticks: { font: { size: 11 } } },
+              x: { grid: { display: false }, ticks: { font: { size: 11 } } }
+            },
+            plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 11 } } } }
+          }
+        });
+      }
+
+      // Distribution chart
+      var distChart = document.getElementById("distChart");
+      if (distChart) {
+        var distData = [
+          {{ recent_runs | sum(attribute='excellent_pages') | default(0) }},
+          {{ recent_runs | sum(attribute='good_pages') | default(0) }},
+          {{ recent_runs | sum(attribute='needs_attention_pages') | default(0) }},
+          {{ recent_runs | sum(attribute='critical_pages') | default(0) }}
+        ];
+        new Chart(distChart, {
+          type: "doughnut",
+          data: {
+            labels: ["Excellent", "Good", "Needs Attention", "Critical"],
+            datasets: [{ data: distData, backgroundColor: ["#10b981", "#6366f1", "#f59e0b", "#ef4444"], borderWidth: 0, borderRadius: 3 }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, cutout: "65%",
+            plugins: { legend: { position: "right", labels: { boxWidth: 10, font: { size: 11 } } } }
+          }
+        });
+      }
+
+      // Counter animation
+      document.querySelectorAll(".counter-num").forEach(function(el) {
+        var target = parseInt(el.textContent, 10);
+        if (isNaN(target) || target === 0) return;
+        el.textContent = "0";
+        var start = performance.now();
+        function tick(now) {
+          var p = Math.min((now - start) / 900, 1);
+          el.textContent = Math.round((1 - Math.pow(1 - p, 3)) * target);
+          if (p < 1) requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      });
+
+      // ── Dashboard Table Pagination ─────────────────
+      (function() {
+        const tbody = document.getElementById('runsTableBody');
+        if (!tbody) return;
+        const PER_PAGE = 25;
+        let currentPage = 1;
+
+        function getRows() {
+          return Array.from(tbody.querySelectorAll('tr'));
+        }
+
+        function render() {
+          const rows = getRows();
+          if (rows.length <= PER_PAGE) return; // No pagination needed
+
+          const totalPages = Math.ceil(rows.length / PER_PAGE);
+          currentPage = Math.min(currentPage, totalPages);
+
+          rows.forEach((row, i) => {
+            const page = Math.floor(i / PER_PAGE) + 1;
+            row.style.display = page === currentPage ? '' : 'none';
+          });
+
+          const bar = document.getElementById('dashboardPagination');
+          const pgInfo = document.getElementById('dashPgInfo');
+          const pgBtns = document.getElementById('dashPgBtns');
+          bar.style.display = 'flex';
+
+          const start = (currentPage - 1) * PER_PAGE + 1;
+          const end = Math.min(currentPage * PER_PAGE, rows.length);
+          pgInfo.textContent = `Showing ${start}–${end} of ${rows.length} scans`;
+
+          pgBtns.innerHTML = '';
+          const prev = document.createElement('button');
+          prev.className = 'pg-btn';
+          prev.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
+          prev.disabled = currentPage === 1;
+          prev.onclick = () => { currentPage--; render(); };
+          pgBtns.appendChild(prev);
+
+          for (let p = 1; p <= totalPages; p++) {
+            const btn = document.createElement('button');
+            btn.className = 'pg-btn' + (p === currentPage ? ' active' : '');
+            btn.textContent = p;
+            btn.onclick = () => { currentPage = p; render(); };
+            pgBtns.appendChild(btn);
+          }
+
+          const next = document.createElement('button');
+          next.className = 'pg-btn';
+          next.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+          next.disabled = currentPage === totalPages;
+          next.onclick = () => { currentPage++; render(); };
+          pgBtns.appendChild(next);
+        }
+
+        render();
+      })();
+
+      // ── Delete Scan ────────────────────────────────
+      let _deleteTargetId = null;
+
+      window.openDeleteModal = function(runId, runUrl) {
+        _deleteTargetId = runId;
+        document.getElementById('deleteModalUrl').textContent = runUrl || '—';
+        const btn = document.getElementById('dmConfirmBtn');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
+        document.getElementById('deleteModal').classList.add('open');
+        document.body.style.overflow = 'hidden';
+      };
+
+      function closeDeleteModal() {
+        document.getElementById('deleteModal').classList.remove('open');
+        document.body.style.overflow = '';
+        _deleteTargetId = null;
+      }
+
+      async function confirmDeleteScan() {
+        if (!_deleteTargetId) return;
+        const btn = document.getElementById('dmConfirmBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Deleting...';
+
+        try {
+          const res = await fetch(`/run/${_deleteTargetId}/delete`, { method: 'POST' });
+          if (res.ok) {
+            // Remove the row from the table without reload
+            const row = document.querySelector(`tr[data-run-id="${_deleteTargetId}"]`);
+            if (row) {
+              row.style.transition = 'opacity 0.3s, transform 0.3s';
+              row.style.opacity = '0';
+              row.style.transform = 'translateX(20px)';
+              setTimeout(() => row.remove(), 320);
+            }
+            closeDeleteModal();
+          } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
+            alert('Failed to delete scan. Please try again.');
+            closeDeleteModal();
+          }
+        } catch (err) {
+          btn.disabled = false;
+          btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
+          alert('Network error. Please check your connection.');
+          closeDeleteModal();
+        }
+      }
+
+      document.getElementById('deleteModal').addEventListener('click', function(e) {
+        if (e.target === this) closeDeleteModal();
+      });
+    </script>
+  </body>
+</html>

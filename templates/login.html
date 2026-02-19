@@ -1,0 +1,628 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login | Guardian AI</title>
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      /* --- DESIGN SYSTEM (Deep Space Theme) --- */
+      :root {
+        --primary: #6366f1;
+        --primary-glow: rgba(99, 102, 241, 0.5);
+        --secondary: #ec4899;
+        --accent: #8b5cf6;
+
+        --bg-body: #f0f4f8;
+        --bg-glass: rgba(255, 255, 255, 0.85);
+        --text-main: #0f172a;
+        --text-muted: #64748b;
+        --border: #cbd5e1;
+
+        --radius-sm: 8px;
+        --radius-md: 16px;
+        --radius-lg: 24px;
+
+        --shadow-float: 0 20px 40px -5px rgba(0, 0, 0, 0.15);
+        --shadow-neon: 0 0 15px rgba(99, 102, 241, 0.3);
+
+        --font-main: "Inter", sans-serif;
+        --font-code: "JetBrains Mono", monospace;
+
+        --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+        --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        outline: none;
+      }
+
+      body {
+        font-family: var(--font-main);
+        background-color: var(--bg-body);
+        color: var(--text-main);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-image:
+          radial-gradient(
+            circle at 5% 10%,
+            rgba(99, 102, 241, 0.08) 0%,
+            transparent 25%
+          ),
+          radial-gradient(
+            circle at 95% 90%,
+            rgba(236, 72, 153, 0.08) 0%,
+            transparent 25%
+          );
+        padding: 20px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      /* Animated Background Orbs */
+      body::before,
+      body::after {
+        content: "";
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(60px);
+        opacity: 0.15;
+        animation: float 20s ease-in-out infinite;
+      }
+
+      body::before {
+        width: 400px;
+        height: 400px;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        top: -200px;
+        right: -200px;
+        animation-delay: 0s;
+      }
+
+      body::after {
+        width: 500px;
+        height: 500px;
+        background: linear-gradient(135deg, var(--secondary), var(--accent));
+        bottom: -250px;
+        left: -250px;
+        animation-delay: 10s;
+      }
+
+      @keyframes float {
+        0%,
+        100% {
+          transform: translate(0, 0) scale(1);
+        }
+        33% {
+          transform: translate(30px, -30px) scale(1.1);
+        }
+        66% {
+          transform: translate(-20px, 20px) scale(0.9);
+        }
+      }
+
+      .auth-card {
+        background: var(--bg-glass);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        width: 100%;
+        max-width: 440px;
+        padding: 48px 40px;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-float);
+        border: 1px solid rgba(255, 255, 255, 0.8);
+        text-align: center;
+        position: relative;
+        z-index: 10;
+        animation: slideUp 0.6s var(--ease-spring);
+      }
+
+      @keyframes slideUp {
+        from {
+          opacity: 0;
+          transform: translateY(30px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .auth-card::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(
+          90deg,
+          var(--primary),
+          var(--secondary),
+          var(--accent)
+        );
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      }
+
+      .logo-icon {
+        width: 72px;
+        height: 72px;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: white;
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 32px;
+        margin: 0 auto 24px;
+        box-shadow: var(--shadow-neon);
+        animation: pulseLogo 4s ease-in-out infinite;
+        transition: transform 0.3s var(--ease-spring);
+      }
+
+      .logo-icon:hover {
+        transform: scale(1.05) rotate(-5deg);
+      }
+
+      @keyframes pulseLogo {
+        0%,
+        100% {
+          box-shadow: 0 0 15px rgba(99, 102, 241, 0.3);
+        }
+        50% {
+          box-shadow:
+            0 0 30px rgba(99, 102, 241, 0.6),
+            0 0 60px rgba(99, 102, 241, 0.3);
+        }
+      }
+
+      h2 {
+        font-size: 28px;
+        font-weight: 800;
+        color: #1e293b;
+        margin-bottom: 8px;
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      p.subtitle {
+        color: var(--text-muted);
+        font-size: 15px;
+        margin-bottom: 36px;
+        font-weight: 500;
+      }
+
+      .input-group {
+        background: #f8fafc;
+        border: 2px solid #e2e8f0;
+        border-radius: var(--radius-md);
+        padding: 4px;
+        display: flex;
+        align-items: center;
+        transition: all 0.3s var(--ease-smooth);
+        margin-bottom: 18px;
+        position: relative;
+      }
+
+      .input-group:focus-within {
+        border-color: var(--primary);
+        background: white;
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+        transform: translateY(-2px);
+      }
+
+      .input-icon {
+        padding: 0 16px;
+        color: var(--primary);
+        min-width: 48px;
+        font-size: 16px;
+        transition: all 0.3s;
+      }
+
+      .input-group:focus-within .input-icon {
+        color: var(--primary);
+        transform: scale(1.1);
+      }
+
+      input {
+        border: none;
+        flex: 1;
+        padding: 14px 0;
+        font-size: 15px;
+        background: transparent;
+        color: var(--text-main);
+        font-family: var(--font-main);
+        font-weight: 500;
+      }
+
+      input::placeholder {
+        color: var(--text-muted);
+        opacity: 0.6;
+      }
+
+      button {
+        background: linear-gradient(135deg, var(--primary), #4f46e5);
+        color: white;
+        border: none;
+        padding: 16px;
+        border-radius: var(--radius-md);
+        width: 100%;
+        font-weight: 700;
+        font-size: 16px;
+        cursor: pointer;
+        transition: all 0.3s var(--ease-spring);
+        margin-top: 12px;
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+        position: relative;
+        overflow: hidden;
+      }
+
+      button::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgba(255, 255, 255, 0.2),
+          transparent
+        );
+        transition: left 0.5s;
+      }
+
+      button:hover::before {
+        left: 100%;
+      }
+
+      button:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 20px rgba(99, 102, 241, 0.5);
+      }
+
+      button:active {
+        transform: translateY(-1px);
+      }
+
+      .error-msg {
+        background: linear-gradient(135deg, #fef2f2, #fee2e2);
+        color: #ef4444;
+        padding: 14px 16px;
+        border-radius: var(--radius-md);
+        font-size: 14px;
+        margin-bottom: 24px;
+        border: 1px solid #fecaca;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 600;
+        animation: shake 0.5s ease-in-out;
+      }
+
+      @keyframes shake {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        10%,
+        30%,
+        50%,
+        70%,
+        90% {
+          transform: translateX(-5px);
+        }
+        20%,
+        40%,
+        60%,
+        80% {
+          transform: translateX(5px);
+        }
+      }
+
+      .qr-container {
+        background: white;
+        padding: 20px;
+        border-radius: var(--radius-md);
+        margin-bottom: 24px;
+        border: 2px solid var(--border);
+        display: inline-block;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+        animation: scaleIn 0.5s var(--ease-spring);
+      }
+
+      @keyframes scaleIn {
+        from {
+          opacity: 0;
+          transform: scale(0.9);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      .qr-container img {
+        width: 180px;
+        height: 180px;
+        display: block;
+        border-radius: var(--radius-sm);
+      }
+
+      .qr-label {
+        font-size: 12px;
+        margin-top: 12px;
+        color: var(--text-muted);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+
+      .footer-link {
+        margin-top: 28px;
+        display: block;
+        font-size: 14px;
+        color: var(--text-muted);
+        text-decoration: none;
+        font-weight: 500;
+        transition: all 0.2s;
+      }
+
+      .footer-link:hover {
+        color: var(--primary);
+        transform: translateY(-2px);
+      }
+
+      .footer-link b {
+        background: linear-gradient(135deg, var(--primary), var(--secondary));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      /* Additional decorative elements */
+      .particles {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      .particle {
+        position: absolute;
+        width: 4px;
+        height: 4px;
+        background: var(--primary);
+        border-radius: 50%;
+        opacity: 0.3;
+        animation: particle-float 15s ease-in-out infinite;
+      }
+
+      .particle:nth-child(1) {
+        left: 10%;
+        top: 20%;
+        animation-delay: 0s;
+      }
+      .particle:nth-child(2) {
+        left: 80%;
+        top: 30%;
+        animation-delay: 2s;
+      }
+      .particle:nth-child(3) {
+        left: 30%;
+        top: 60%;
+        animation-delay: 4s;
+        background: var(--secondary);
+      }
+      .particle:nth-child(4) {
+        left: 70%;
+        top: 80%;
+        animation-delay: 6s;
+      }
+      .particle:nth-child(5) {
+        left: 50%;
+        top: 10%;
+        animation-delay: 8s;
+        background: var(--accent);
+      }
+
+      @keyframes particle-float {
+        0%,
+        100% {
+          transform: translate(0, 0);
+          opacity: 0.3;
+        }
+        50% {
+          transform: translate(20px, -20px);
+          opacity: 0.8;
+        }
+      }
+
+      /* Responsive */
+      @media (max-width: 480px) {
+        .auth-card {
+          padding: 36px 28px;
+        }
+
+        h2 {
+          font-size: 24px;
+        }
+
+        .logo-icon {
+          width: 64px;
+          height: 64px;
+          font-size: 28px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="particles">
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+      <div class="particle"></div>
+    </div>
+
+    <div class="auth-card">
+      <div class="logo-icon">
+        <i class="fa-solid fa-shield-cat"></i>
+      </div>
+
+      {% if show_otp %}
+      <h2>Security Check</h2>
+      <p class="subtitle">Enter your 2FA code to continue</p>
+      {% else %}
+      <h2>Welcome Back</h2>
+      <p class="subtitle">Enter your credentials to access Guardian</p>
+      {% endif %} {% if error %}
+      <div class="error-msg">
+        <i class="fa-solid fa-circle-exclamation"></i>
+        {{ error }}
+      </div>
+      {% endif %}
+
+      <form method="POST">
+        {% if not show_otp %}
+        <div class="input-group">
+          <span class="input-icon"><i class="fa-solid fa-user"></i></span>
+          <input
+            type="text"
+            name="username"
+            placeholder="Username"
+            required
+            autofocus
+          />
+        </div>
+        <div class="input-group">
+          <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
+          <input
+            type="password"
+            name="password"
+            placeholder="Password"
+            required
+          />
+        </div>
+        {% endif %} {% if show_otp %} {% if qr %}
+        <div class="qr-container">
+          <img src="data:image/png;base64,{{ qr }}" alt="QR Code" />
+          <p class="qr-label">
+            <i class="fa-solid fa-qrcode"></i>
+            Scan via Google Authenticator
+          </p>
+        </div>
+        {% endif %}
+
+        <div class="input-group">
+          <span class="input-icon"><i class="fa-solid fa-key"></i></span>
+          <input
+            type="text"
+            name="otp"
+            placeholder="Enter 6-digit Code"
+            style="
+              font-family: var(--font-code);
+              letter-spacing: 3px;
+              text-align: center;
+            "
+            required
+            autofocus
+            autocomplete="off"
+            maxlength="6"
+            pattern="[0-9]{6}"
+          />
+        </div>
+        {% endif %}
+
+        <button type="submit">
+          {% if show_otp %}
+          <i class="fa-solid fa-shield-check" style="margin-right: 8px"></i>
+          Verify Identity {% else %}
+          <i
+            class="fa-solid fa-arrow-right-to-bracket"
+            style="margin-right: 8px"
+          ></i>
+          Sign In {% endif %}
+        </button>
+      </form>
+
+      <a href="/register" class="footer-link">
+        Don't have an account? <b>Create one</b>
+        <i
+          class="fa-solid fa-arrow-right"
+          style="margin-left: 4px; font-size: 12px"
+        ></i>
+      </a>
+    </div>
+
+    <script>
+      // Auto-focus first input on load
+      window.addEventListener("load", () => {
+        const firstInput = document.querySelector("input");
+        if (firstInput) {
+          setTimeout(() => firstInput.focus(), 100);
+        }
+      });
+
+      // Add ripple effect to button
+      const button = document.querySelector("button");
+      button.addEventListener("click", function (e) {
+        const ripple = document.createElement("span");
+        const rect = this.getBoundingClientRect();
+        const size = Math.max(rect.width, rect.height);
+        const x = e.clientX - rect.left - size / 2;
+        const y = e.clientY - rect.top - size / 2;
+
+        ripple.style.cssText = `
+          position: absolute;
+          width: ${size}px;
+          height: ${size}px;
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.5);
+          left: ${x}px;
+          top: ${y}px;
+          pointer-events: none;
+          transform: scale(0);
+          animation: ripple 0.6s ease-out;
+        `;
+
+        this.appendChild(ripple);
+        setTimeout(() => ripple.remove(), 600);
+      });
+
+      // Add ripple animation
+      const style = document.createElement("style");
+      style.textContent = `
+        @keyframes ripple {
+          to {
+            transform: scale(2);
+            opacity: 0;
+          }
+        }
+      `;
+      document.head.appendChild(style);
+    </script>
+  </body>
+</html>

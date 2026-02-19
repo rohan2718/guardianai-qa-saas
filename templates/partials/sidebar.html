@@ -1,0 +1,851 @@
+<style>
+  /* ─── Sidebar shell ───────────────────────────────── */
+  .sidebar {
+    width: 260px;
+    background: #ffffff;
+    border-right: 1px solid #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    z-index: 90;
+    padding: 20px 12px;
+    box-shadow: 2px 0 16px rgba(0, 0, 0, 0.04);
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(4px);
+    z-index: 80;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+  .sidebar-overlay.active {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* ─── Logo ────────────────────────────────────────── */
+  .logo-area {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 4px 8px 20px;
+    border-bottom: 1px solid #f1f5f9;
+    margin-bottom: 16px;
+  }
+  .logo-icon {
+    width: 36px;
+    height: 36px;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: white;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .logo-area:hover .logo-icon {
+    transform: rotate(-8deg) scale(1.1);
+  }
+  .logo-text h1 {
+    font-size: 15px;
+    font-weight: 800;
+    color: #0f172a;
+    margin: 0;
+    line-height: 1.2;
+  }
+  .logo-text span {
+    font-size: 9px;
+    font-weight: 700;
+    color: #6366f1;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    opacity: 0.8;
+  }
+
+  /* ─── Nav ─────────────────────────────────────────── */
+  .nav-menu {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scrollbar-width: none;
+  }
+  .nav-menu::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-cta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px;
+    background: linear-gradient(135deg, #6366f1, #ec4899);
+    color: white;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    margin-bottom: 10px;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.28);
+    transition:
+      transform 0.2s,
+      box-shadow 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .nav-cta::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), transparent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .nav-cta:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 22px rgba(99, 102, 241, 0.4);
+    color: white;
+  }
+  .nav-cta:hover::after {
+    opacity: 1;
+  }
+  .nav-cta:active {
+    transform: translateY(0);
+  }
+
+  .nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    cursor: pointer;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      transform 0.2s;
+  }
+  .nav-btn:hover {
+    background: #f1f5f9;
+    color: #1e293b;
+    transform: translateX(3px);
+  }
+  .nav-btn.active {
+    background: rgba(99, 102, 241, 0.1);
+    color: #6366f1;
+    font-weight: 700;
+  }
+  .nav-btn .nav-icon {
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  /* ─── History section ────────────────────────────── */
+  .history-list {
+    padding-top: 16px;
+    border-top: 1px solid #f1f5f9;
+    margin-top: 8px;
+  }
+  .history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 6px;
+    margin-bottom: 8px;
+  }
+  .history-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .history-clear-btn {
+    font-size: 10px;
+    font-weight: 700;
+    color: #cbd5e1;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition:
+      color 0.15s,
+      background 0.15s;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .history-clear-btn:hover {
+    color: #ef4444;
+    background: #fee2e2;
+  }
+
+  /* ─── Individual history item ────────────────────── */
+  .history-item-wrap {
+    position: relative;
+    margin-bottom: 2px;
+    overflow: hidden;
+    animation: histSlideIn 0.38s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes histSlideIn {
+    from {
+      opacity: 0;
+      transform: translateX(-14px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+  .history-item-wrap:nth-child(1) {
+    animation-delay: 0.04s;
+  }
+  .history-item-wrap:nth-child(2) {
+    animation-delay: 0.09s;
+  }
+  .history-item-wrap:nth-child(3) {
+    animation-delay: 0.14s;
+  }
+  .history-item-wrap:nth-child(4) {
+    animation-delay: 0.19s;
+  }
+  .history-item-wrap:nth-child(5) {
+    animation-delay: 0.24s;
+  }
+
+  .history-item-wrap.removing {
+    animation: histRemove 0.4s cubic-bezier(0.55, 0, 1, 0.45) forwards !important;
+    pointer-events: none;
+  }
+  @keyframes histRemove {
+    0% {
+      opacity: 1;
+      transform: translateX(0);
+      max-height: 48px;
+      margin-bottom: 2px;
+    }
+    35% {
+      opacity: 0;
+      transform: translateX(28px) scale(0.95);
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(28px);
+      max-height: 0;
+      margin-bottom: 0;
+    }
+  }
+
+  .history-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s;
+    width: calc(100% - 28px); /* leave room for delete btn */
+  }
+  .history-item:hover {
+    background: #f8fafc;
+  }
+  .history-item-wrap:hover .history-delete-btn {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .history-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .history-item:hover .history-dot {
+    transform: scale(1.5);
+  }
+
+  .history-info {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .history-url {
+    font-size: 12px;
+    font-weight: 600;
+    color: #334155;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.3;
+    transition: color 0.15s;
+  }
+  .history-item:hover .history-url {
+    color: #6366f1;
+  }
+  .history-id {
+    font-size: 10px;
+    color: #94a3b8;
+    font-family: "JetBrains Mono", monospace;
+  }
+
+  .history-delete-btn {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    translate: 0 -50%;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #cbd5e1;
+    font-size: 10px;
+    flex-shrink: 0;
+    opacity: 0;
+    transform: scale(0.6);
+    transition:
+      opacity 0.15s,
+      transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1),
+      background 0.15s,
+      color 0.15s;
+  }
+  .history-delete-btn:hover {
+    background: #fee2e2;
+    color: #ef4444;
+    transform: scale(1.15) !important;
+  }
+  .history-delete-btn:active {
+    transform: scale(0.88) !important;
+  }
+
+  /* ─── Empty state ────────────────────────────────── */
+  .history-empty {
+    font-size: 12px;
+    color: #94a3b8;
+    text-align: center;
+    padding: 14px 8px;
+    background: #f8fafc;
+    border-radius: 8px;
+    border: 1px dashed #e2e8f0;
+  }
+  @keyframes emptyPop {
+    0% {
+      opacity: 0;
+      transform: scale(0.75) translateY(4px);
+    }
+    65% {
+      transform: scale(1.04) translateY(-1px);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+  .history-empty.pop {
+    animation: emptyPop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  /* ─── Undo toast ─────────────────────────────────── */
+  .history-toast {
+    position: fixed;
+    bottom: 88px;
+    left: 50%;
+    transform: translateX(-50%) translateY(14px);
+    background: #1e293b;
+    color: #f1f5f9;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 9px 12px 9px 14px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+    z-index: 9999;
+    opacity: 0;
+    pointer-events: none;
+    transition:
+      opacity 0.22s ease,
+      transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+    white-space: nowrap;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .history-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+    pointer-events: auto;
+  }
+  .toast-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ef4444;
+    flex-shrink: 0;
+    animation: toastPulse 1.4s ease infinite;
+  }
+  @keyframes toastPulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.55;
+      transform: scale(0.75);
+    }
+  }
+  .toast-timer {
+    height: 2px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 2px;
+    flex: 1;
+    min-width: 48px;
+    overflow: hidden;
+    position: relative;
+  }
+  .toast-timer-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: linear-gradient(90deg, #6366f1, #ec4899);
+    border-radius: 2px;
+    width: 100%;
+    transform-origin: left;
+    animation: none;
+  }
+  .toast-timer-fill.running {
+    animation: timerShrink 3.8s linear forwards;
+  }
+  @keyframes timerShrink {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+  .toast-undo-btn {
+    background: rgba(99, 102, 241, 0.22);
+    color: #a5b4fc;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 10px;
+    flex-shrink: 0;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      transform 0.15s;
+  }
+  .toast-undo-btn:hover {
+    background: #6366f1;
+    color: white;
+    transform: scale(1.05);
+  }
+  .toast-undo-btn:active {
+    transform: scale(0.95);
+  }
+
+  /* ─── User panel ─────────────────────────────────── */
+  .user-panel {
+    margin-top: 16px;
+    padding: 10px 12px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .user-panel .avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #f472b6, #ec4899);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .user-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1e293b;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+  }
+  .user-plan {
+    font-size: 10px;
+    color: #10b981;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .user-plan::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #10b981;
+    display: inline-block;
+  }
+  .logout-btn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    color: #94a3b8;
+    text-decoration: none;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      transform 0.2s;
+    flex-shrink: 0;
+  }
+  .logout-btn:hover {
+    background: #fee2e2;
+    color: #ef4444;
+    transform: rotate(10deg);
+  }
+
+  /* ─── Mobile ─────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      height: 100vh;
+      transform: translateX(-100%);
+    }
+    .sidebar.active {
+      transform: translateX(0);
+      box-shadow: 8px 0 32px rgba(0, 0, 0, 0.12);
+    }
+  }
+</style>
+
+<!-- Toast — lives outside sidebar so it centres in the full viewport -->
+<div class="history-toast" id="historyToast">
+  <div class="toast-indicator"></div>
+  <span id="toastMsg">Scan removed</span>
+  <div class="toast-timer">
+    <div class="toast-timer-fill" id="toastTimerFill"></div>
+  </div>
+  <button class="toast-undo-btn" onclick="undoDelete()">Undo</button>
+</div>
+
+<div class="sidebar-overlay" onclick="toggleSidebar()"></div>
+<aside class="sidebar" id="sidebar">
+  <div class="logo-area">
+    <div class="logo-icon"><i class="fa-solid fa-shield-cat"></i></div>
+    <div class="logo-text">
+      <h1>Guardian AI</h1>
+      <span>Forensic Engine</span>
+    </div>
+  </div>
+
+  <nav class="nav-menu">
+    <a href="/new-scan" class="nav-cta">
+      <i class="fa-solid fa-bolt"></i> New Scan
+    </a>
+
+    <a
+      href="/dashboard"
+      class="nav-btn {% if request.path == '/dashboard' %}active{% endif %}"
+    >
+      <span class="nav-icon"><i class="fa-solid fa-chart-line"></i></span>
+      Dashboard
+    </a>
+
+    <a
+      href="/"
+      class="nav-btn {% if request.path == '/' or request.path.startswith('/run/') %}active{% endif %}"
+    >
+      <span class="nav-icon"><i class="fa-solid fa-list-check"></i></span>
+      Scan Results
+    </a>
+
+    <div style="flex: 1; min-height: 8px"></div>
+
+    <div class="history-list">
+      <div class="history-header">
+        <span class="history-label">Recent Scans</span>
+        {% set history_items = history if history else recent_runs %} {% if
+        history_items %}
+        <button class="history-clear-btn" onclick="clearAllHistory()">
+          Clear all
+        </button>
+        {% endif %}
+      </div>
+
+      <div id="historyContainer">
+        {% set history_items = history if history else recent_runs %} {% if
+        history_items %} {% for item in history_items[:5] %}
+        <div
+          class="history-item-wrap"
+          id="hist-{{ item.id }}"
+          data-id="{{ item.id }}"
+          data-url="{{ item.target_url or item.url }}"
+          data-status="{{ item.status }}"
+        >
+          <a href="/run/{{ item.id }}" class="history-item">
+            <div
+              class="history-dot"
+              style="background:{% if item.status == 'completed' %}#10b981{% else %}#f59e0b{% endif %};"
+            ></div>
+            <div class="history-info">
+              <div class="history-url">{{ item.target_url or item.url }}</div>
+              <div class="history-id">#{{ item.id }}</div>
+            </div>
+          </a>
+          <button
+            class="history-delete-btn"
+            onclick="deleteHistoryItem('{{ item.id }}', event)"
+            title="Remove from history"
+            aria-label="Remove scan #{{ item.id }} from history"
+          >
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        {% endfor %} {% else %}
+        <div class="history-empty" id="historyEmpty">No scans yet</div>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+
+  <div class="user-panel">
+    <div class="avatar">{{ current_user.username[0] | upper }}</div>
+    <div style="flex: 1; min-width: 0">
+      <div class="user-name">{{ current_user.username }}</div>
+      <div class="user-plan">{{ plan }} Plan</div>
+    </div>
+    <a href="/logout" class="logout-btn" title="Sign out">
+      <i class="fa-solid fa-right-from-bracket"></i>
+    </a>
+  </div>
+</aside>
+
+<script>
+  (function () {
+    /* ── Sidebar toggle ───────────────────────────── */
+    window.toggleSidebar = function () {
+      const sidebar = document.getElementById("sidebar");
+      const overlay = document.querySelector(".sidebar-overlay");
+      sidebar.classList.toggle("active");
+      overlay.classList.toggle("active");
+      document.body.style.overflow = sidebar.classList.contains("active")
+        ? "hidden"
+        : "";
+    };
+
+    /* ── State ────────────────────────────────────── */
+    let _toastTimer = null;
+    let _undoStack = []; // [{id, html, insertRef, insertBefore}]
+    let _pendingDeletes = {}; // id → commit-timer
+
+    /* ── Toast helpers ────────────────────────────── */
+    function _showToast(msg) {
+      const toast = document.getElementById("historyToast");
+      const fill = document.getElementById("toastTimerFill");
+      document.getElementById("toastMsg").textContent = msg;
+
+      // Reset + restart timer bar
+      fill.classList.remove("running");
+      void fill.offsetWidth; // reflow to restart animation
+      fill.classList.add("running");
+
+      toast.classList.add("show");
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(_commitAllPending, 3800);
+    }
+
+    function _hideToast() {
+      document.getElementById("historyToast").classList.remove("show");
+      clearTimeout(_toastTimer);
+    }
+
+    function _commitAllPending() {
+      _hideToast();
+      Object.keys(_pendingDeletes).forEach((id) => {
+        clearTimeout(_pendingDeletes[id]);
+        _sendDelete(id);
+      });
+      _pendingDeletes = {};
+      _undoStack = [];
+    }
+
+    /* ── Single-item delete ───────────────────────── */
+    window.deleteHistoryItem = function (id, e) {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      const wrap = document.getElementById("hist-" + id);
+      if (!wrap) return;
+
+      // Snapshot for undo
+      _undoStack.push({
+        id,
+        html: wrap.outerHTML,
+        insertRef: wrap.previousElementSibling,
+        parent: wrap.parentNode,
+      });
+
+      // Schedule server call (cancelled if user hits Undo)
+      clearTimeout(_pendingDeletes[id]);
+      _pendingDeletes[id] = setTimeout(() => {
+        _sendDelete(id);
+        delete _pendingDeletes[id];
+      }, 4200);
+
+      _animateOut(wrap);
+      _showToast("Scan removed");
+    };
+
+    /* ── Clear all ────────────────────────────────── */
+    window.clearAllHistory = function () {
+      const container = document.getElementById("historyContainer");
+      const items = Array.from(
+        container.querySelectorAll(".history-item-wrap"),
+      );
+      if (!items.length) return;
+
+      _undoStack = [];
+      items.forEach((wrap) => {
+        _undoStack.push({
+          id: wrap.dataset.id,
+          html: wrap.outerHTML,
+          insertRef: wrap.previousElementSibling,
+          parent: wrap.parentNode,
+        });
+
+        clearTimeout(_pendingDeletes[wrap.dataset.id]);
+        _pendingDeletes[wrap.dataset.id] = setTimeout(() => {
+          _sendDelete(wrap.dataset.id);
+          delete _pendingDeletes[wrap.dataset.id];
+        }, 4200);
+      });
+
+      // Staggered exit
+      items.forEach((wrap, i) => {
+        setTimeout(() => _animateOut(wrap), i * 60);
+      });
+
+      _showToast("History cleared");
+    };
+
+    /* ── Undo ─────────────────────────────────────── */
+    window.undoDelete = function () {
+      if (!_undoStack.length) return;
+
+      // Cancel all pending server deletes
+      Object.keys(_pendingDeletes).forEach((id) => {
+        clearTimeout(_pendingDeletes[id]);
+        delete _pendingDeletes[id];
+      });
+      _hideToast();
+
+      // Remove empty placeholder if present
+      const empty = document.getElementById("historyEmpty");
+      if (empty) empty.remove();
+
+      // Re-insert in original order (reverse to keep sequence)
+      [..._undoStack].reverse().forEach((snap) => {
+        if (document.getElementById("hist-" + snap.id)) return; // already there
+
+        const tmp = document.createElement("div");
+        tmp.innerHTML = snap.html.trim();
+        const el = tmp.firstElementChild;
+
+        // Reset any exit animation, force re-entry
+        el.classList.remove("removing");
+        el.style.animation = "none";
+
+        const container = document.getElementById("historyContainer");
+        if (snap.insertRef && document.contains(snap.insertRef)) {
+          snap.insertRef.insertAdjacentElement("afterend", el);
+        } else {
+          container.prepend(el);
+        }
+
+        // Trigger entry animation on next frame
+        requestAnimationFrame(() => {
+          el.style.animation = "";
+          el.style.animationDelay = "0s";
+        });
+      });
+
+      _undoStack = [];
+    };
+
+    /* ── Animate item out ─────────────────────────── */
+    function _animateOut(wrap) {
+      wrap.classList.add("removing");
+      wrap.addEventListener(
+        "animationend",
+        () => {
+          wrap.remove();
+          _maybeShowEmpty();
+        },
+        { once: true },
+      );
+    }
+
+    /* ── Show empty state when list drains ─────────── */
+    function _maybeShowEmpty() {
+      const container = document.getElementById("historyContainer");
+      if (!container) return;
+      const live = container.querySelectorAll(
+        ".history-item-wrap:not(.removing)",
+      );
+      if (live.length === 0 && !document.getElementById("historyEmpty")) {
+        const el = document.createElement("div");
+        el.id = "historyEmpty";
+        el.className = "history-empty pop";
+        el.textContent = "No scans yet";
+        container.appendChild(el);
+      }
+    }
+
+    /* ── Fire-and-forget server delete ─────────────── */
+    function _sendDelete(id) {
+      fetch("/history/" + id + "/delete", { method: "POST" }).catch(() => {}); // graceful — route may not exist yet
+    }
+  })();
+</script>
