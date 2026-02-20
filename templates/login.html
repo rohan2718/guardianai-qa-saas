@@ -506,6 +506,7 @@
       {% endif %}
 
       <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         {% if not show_otp %}
         <div class="input-group">
           <span class="input-icon"><i class="fa-solid fa-user"></i></span>

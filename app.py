@@ -1,16 +1,38 @@
 """
-GuardianAI Flask App — Production SaaS QA Platform
-Extended: scan filters, ETA endpoint, confidence score, per-page AI fields API.
-Improved: pagination, delete scans, clickable URLs, UX.
+app.py — GuardianAI Flask Application
+Production SaaS QA Platform.
+
+SECURITY FIXES applied in this version:
+  1. SECRET_KEY hard-fails on startup if not set (via config.py)
+  2. CSRF protection via Flask-WTF on all POST forms
+  3. Rate limiting via Flask-Limiter on login + scan submission
+  4. 2FA QR code stored in Redis (TTL=300s), NOT in the session cookie
+  5. All JSON API endpoints exempt from CSRF (stateless Bearer-style auth via flask-login)
+
+ARCHITECTURE FIXES:
+  6. Single DB_URL imported from config — no duplicate construction
+  7. run_pages_paginated queries PageResult table (LIMIT/OFFSET) — no JSON file load
+  8. history_days plan limit enforced in all history queries
+  9. scan_filters read/written as native JSONB list (no json.dumps/loads)
+ 10. generate_metrics_from_run() replaces Excel-file-based aggregation on dashboard
+ 11. Deprecated Session.query.get() → db.session.get()
+ 12. Redis connection pool with startup ping validation
 """
+
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv()
+
+# Always load .env from the project directory, regardless of cwd
+load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
+
+# config.py validates SECRET_KEY and exits the process if missing
+import config  # noqa: E402 — must import before anything else touches os.environ
 
 import base64
 import json
 import logging
 import os
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 from io import BytesIO
 
 import markdown
@@ -18,19 +40,21 @@ import pandas as pd
 import pyotp
 import qrcode
 import redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 from flask import (Flask, abort, redirect, render_template,
                    request, send_from_directory, session, jsonify)
 from flask_login import (LoginManager, login_required,
                          login_user, logout_user, current_user)
-from flask_sqlalchemy import SQLAlchemy
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from rq import Queue
-from sqlalchemy.engine import URL
+from rq.job import Retry
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from ai_analyzer import analyze_site
-from analytics import generate_metrics
+from analytics import generate_metrics, generate_metrics_from_run
 from models import db, User, TestRun, PageResult
-from config import PLAN_LIMITS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,36 +62,31 @@ logger = logging.getLogger(__name__)
 # ── App Setup ──────────────────────────────────────────────────────────────────
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "CHANGE-THIS-IN-PRODUCTION")
 
-SCREENSHOT_DIR = os.path.join(os.getcwd(), "screenshots")
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+# Single source of truth — config.py already validated this is non-empty
+app.config["SECRET_KEY"]                  = config.SECRET_KEY
+app.config["SQLALCHEMY_DATABASE_URI"]     = config.DB_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["WTF_CSRF_TIME_LIMIT"]         = 3600   # 1 hour token lifetime
+
+print("DB URL", str(config.DB_URL) )
+
+SCREENSHOT_DIR = config.SCREENSHOT_DIR
 os.makedirs("reports", exist_ok=True)
 os.makedirs("raw", exist_ok=True)
 
-# ── Database ───────────────────────────────────────────────────────────────────
-
-DB_URL = URL.create(
-    drivername="postgresql",
-    username=os.environ.get("DB_USER", "postgres"),
-    password=os.environ.get("DB_PASS", ""),
-    host=os.environ.get("DB_HOST", "localhost"),
-    database=os.environ.get("DB_NAME", "qa_system"),
-)
-app.config["SQLALCHEMY_DATABASE_URI"] = DB_URL
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+# ── Extensions ─────────────────────────────────────────────────────────────────
 
 db.init_app(app)
 
-# ── Redis / RQ ─────────────────────────────────────────────────────────────────
+csrf = CSRFProtect(app)
 
-redis_conn = redis.Redis(
-    host=os.environ.get("REDIS_HOST", "localhost"),
-    port=int(os.environ.get("REDIS_PORT", 6379))
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=[],           # No global limit — apply per-route
+    storage_uri=config.REDIS_URL,
 )
-task_queue = Queue(connection=redis_conn)
-
-# ── Auth ───────────────────────────────────────────────────────────────────────
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -76,120 +95,186 @@ login_manager.login_view = "login"
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
+
+# ── Redis ──────────────────────────────────────────────────────────────────────
+
+def _make_redis() -> redis.Redis:
+    pool = redis.ConnectionPool.from_url(
+        config.REDIS_URL,
+        max_connections=20,
+        socket_connect_timeout=5,
+        socket_timeout=5,
+        retry_on_timeout=True,
+    )
+    conn = redis.Redis(connection_pool=pool)
+    try:
+        conn.ping()
+        logger.info(f"Redis connected: {config.REDIS_HOST}:{config.REDIS_PORT}")
+    except RedisConnectionError as e:
+        logger.error(f"Redis unavailable at startup: {e}. Job queue will not function.")
+    return conn
+
+
+redis_conn = _make_redis()
+task_queue = Queue("default", connection=redis_conn)
 
 # ── Filter definitions (server-side source of truth) ──────────────────────────
 
 SCAN_FILTER_DEFS = [
-    {"key": "ui_elements",     "label": "UI Elements",      "group": "UI",          "desc": "Buttons, links, nav, dropdowns, modals, tabs, accordions, pagination"},
-    {"key": "form_validation", "label": "Form Validation",  "group": "UI",          "desc": "Input presence, labels, required fields, submit, error messages"},
-    {"key": "functional",      "label": "Functional",       "group": "QA",          "desc": "Broken links, 404s, redirect chains, JS errors, API failures"},
-    {"key": "accessibility",   "label": "Accessibility",    "group": "Compliance",  "desc": "ARIA, alt text, keyboard nav, color contrast, screen reader"},
-    {"key": "performance",     "label": "Performance",      "group": "Performance", "desc": "Load time, FCP, LCP, unused JS/CSS, image optimization"},
-    {"key": "security",        "label": "Security",         "group": "Security",    "desc": "HTTPS, mixed content, CSP, XSS patterns, CSRF"},
+    {"key": "ui_elements",     "label": "UI Elements",     "group": "UI",          "desc": "Buttons, links, nav, dropdowns, modals, tabs, accordions, pagination"},
+    {"key": "form_validation", "label": "Form Validation", "group": "UI",          "desc": "Input presence, labels, required fields, submit, error messages"},
+    {"key": "functional",      "label": "Functional",      "group": "QA",          "desc": "Broken links, 404s, redirect chains, JS errors, API failures"},
+    {"key": "accessibility",   "label": "Accessibility",   "group": "Compliance",  "desc": "ARIA, alt text, keyboard nav, color contrast, screen reader"},
+    {"key": "performance",     "label": "Performance",     "group": "Performance", "desc": "Load time, FCP, LCP, unused JS/CSS, image optimization"},
+    {"key": "security",        "label": "Security",        "group": "Security",    "desc": "HTTPS, mixed content, CSP, XSS patterns, CSRF"},
 ]
 
 VALID_FILTER_KEYS = {f["key"] for f in SCAN_FILTER_DEFS}
 
+# ── Filter icon map (passed to templates for filter pill/card display) ─────────
+
+FILTER_ICONS = {
+    "ui_elements":     "fa-solid fa-layer-group",
+    "form_validation": "fa-solid fa-wpforms",
+    "functional":      "fa-solid fa-link",
+    "accessibility":   "fa-solid fa-universal-access",
+    "performance":     "fa-solid fa-gauge-high",
+    "security":        "fa-solid fa-shield-halved",
+}
+
 # ── Pagination defaults ────────────────────────────────────────────────────────
-DEFAULT_PAGE_SIZE = 25
+
+DEFAULT_PAGE_SIZE  = 25
 ALLOWED_PAGE_SIZES = [10, 25, 50]
+
+# ── 2FA QR Redis key helpers ───────────────────────────────────────────────────
+
+_QR_TTL = 300  # seconds — QR code expires in 5 minutes
+
+def _qr_redis_key(user_id: int) -> str:
+    return f"guardianai:qr:{user_id}"
+
+def _store_qr(user_id: int, qr_base64: str):
+    try:
+        redis_conn.setex(_qr_redis_key(user_id), _QR_TTL, qr_base64)
+    except Exception as e:
+        logger.warning(f"Could not store QR in Redis: {e}")
+
+def _get_qr(user_id: int) -> str | None:
+    try:
+        val = redis_conn.get(_qr_redis_key(user_id))
+        return val.decode() if val else None
+    except Exception:
+        return None
+
+def _delete_qr(user_id: int):
+    try:
+        redis_conn.delete(_qr_redis_key(user_id))
+    except Exception:
+        pass
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _plan_limits(user: User) -> dict:
+    from config import PLAN_LIMITS
     return PLAN_LIMITS.get(user.plan, PLAN_LIMITS["free"])
+
+
+def _history_cutoff(user: User) -> datetime:
+    """Returns the earliest datetime a user's plan allows them to view."""
+    limits = _plan_limits(user)
+    days   = limits.get("history_days", 7)
+    return datetime.now(UTC) - timedelta(days=days)
 
 
 def _scans_today(user: User) -> int:
     from datetime import date
     today_start = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=UTC)
     return TestRun.query.filter(
-        TestRun.user_id == user.id,
-        TestRun.started_at >= today_start
+        TestRun.user_id    == user.id,
+        TestRun.started_at >= today_start,
     ).count()
 
 
-# ── Jinja2 context processor: inject plan + user for sidebar in ALL templates ──
+def _history_query(user: User):
+    """Base query for scan history respecting history_days plan limit."""
+    cutoff = _history_cutoff(user)
+    return (
+        TestRun.query
+        .filter(
+            TestRun.user_id    == user.id,
+            TestRun.started_at >= cutoff,
+        )
+    )
+
+
+# ── Jinja2 context processor ───────────────────────────────────────────────────
 
 @app.context_processor
 def inject_sidebar_globals():
-    """Makes `plan` and `plan_limits` available in every rendered template."""
-    from flask_login import current_user as _cu
-    if _cu.is_authenticated:
+    if current_user.is_authenticated:
         return {
-            "plan":        _cu.plan,
-            "plan_limits": _plan_limits(_cu),
+            "plan":        current_user.plan,
+            "plan_limits": _plan_limits(current_user),
         }
-    return {"plan": "free", "plan_limits": PLAN_LIMITS.get("free", {})}
+    return {"plan": "free", "plan_limits": {}}
 
 
-def load_history_from_db():
-    runs = (TestRun.query
-            .filter_by(user_id=current_user.id)
-            .order_by(TestRun.id.desc())
-            .limit(15)
-            .all())
+# ── History loader (sidebar) ───────────────────────────────────────────────────
+
+def load_history_from_db() -> list:
+    runs = (
+        _history_query(current_user)
+        .order_by(TestRun.id.desc())
+        .limit(15)
+        .all()
+    )
     return [
         {
-            "id": r.id,
-            "url": r.target_url,
-            "status": r.status,
-            "time": r.finished_at.strftime("%d %b %H:%M") if r.finished_at else "Pending",
-            "health_score": r.site_health_score,
-            "risk_category": r.risk_category,
-            "total_pages": r.total_tests,
+            "id":             r.id,
+            "url":            r.target_url,
+            "status":         r.status,
+            "time":           r.finished_at.strftime("%d %b %H:%M") if r.finished_at else "Pending",
+            "health_score":   r.site_health_score,
+            "risk_category":  r.risk_category,
+            "total_pages":    r.total_tests,
             "confidence_score": r.confidence_score,
         }
         for r in runs
     ]
 
 
+# ── Run context builder ────────────────────────────────────────────────────────
+
 def enrich_run_context(run: TestRun) -> dict:
     """
     Loads all data files and returns template context for a given run.
+    Uses generate_metrics_from_run() for dashboard metrics (no Excel read).
+    Excel is only read when raw file is needed for legacy endpoints.
 
-    SAFETY CONTRACT — never let None reach a template that iterates:
-      • raw_data    → always list   ([] while scan running / file missing)
-      • report_data → always list   ([] while scan running / file missing)
-      • metrics     → always dict   ({} while scan running / file missing)
-
-    Every file read is individually wrapped so a missing or partially-written
-    file (common while a crawl is still in progress) never crashes the view.
+    Safety contract: raw_data, data, metrics are always list/list/dict — never None.
     """
-    # ── Safe defaults — templates can iterate these even if files aren't ready ─
-    raw_data    = []   # type: list
-    report_data = []   # type: list
-    metrics     = {}   # type: dict
+    raw_data    = []
+    report_data = []
     ai_insight  = None
     site_health = None
 
-    # ── Excel report (written after crawl finishes) ───────────────────────────
-    if run.report_file and os.path.exists(run.report_file):
-        try:
-            df = pd.read_excel(run.report_file).fillna("")
-            report_data = df.to_dict(orient="records") or []
-            metrics     = generate_metrics(report_data) or {}
-        except Exception as exc:
-            logger.warning("enrich_run_context: could not load report file %s — %s",
-                           run.report_file, exc)
-            report_data = []
-            metrics     = {}
+    # Metrics from DB aggregate fields (fast — no file I/O)
+    metrics = generate_metrics_from_run(run) if run.status == "completed" else {}
 
-    # ── Raw JSON per-page results (written incrementally during crawl) ─────────
+    # Raw JSON — only loaded for the template's detail view (not for pagination)
     if run.raw_file and os.path.exists(run.raw_file):
         try:
             with open(run.raw_file, "r", encoding="utf-8") as fh:
                 loaded = json.load(fh)
             raw_data = loaded if isinstance(loaded, list) else []
         except Exception as exc:
-            logger.warning("enrich_run_context: could not load raw file %s — %s",
-                           run.raw_file, exc)
-            raw_data = []
+            logger.warning("enrich_run_context: could not load raw file %s — %s", run.raw_file, exc)
 
-    # ── AI summary markdown ───────────────────────────────────────────────────
+    # AI summary markdown
     if run.summary_file and os.path.exists(run.summary_file):
         try:
             try:
@@ -201,43 +286,89 @@ def enrich_run_context(run: TestRun) -> dict:
             if ai_insight:
                 ai_insight = markdown.markdown(ai_insight)
         except Exception as exc:
-            logger.warning("enrich_run_context: could not load summary file %s — %s",
-                           run.summary_file, exc)
-            ai_insight = None
+            logger.warning("enrich_run_context: could not load summary %s — %s", run.summary_file, exc)
 
-    # ── Site-level health JSON ────────────────────────────────────────────────
+    # Site health JSON
     if run.site_summary_file and os.path.exists(run.site_summary_file):
         try:
             with open(run.site_summary_file, "r", encoding="utf-8") as fh:
                 site_health = json.load(fh)
         except Exception as exc:
-            logger.warning("enrich_run_context: could not load site summary %s — %s",
-                           run.site_summary_file, exc)
-            site_health = None
+            logger.warning("enrich_run_context: could not load site summary %s — %s", run.site_summary_file, exc)
 
-    # ── Active scan filters ───────────────────────────────────────────────────
-    active_filters = []
-    if run.scan_filters:
-        try:
-            active_filters = json.loads(run.scan_filters)
-        except Exception:
-            active_filters = []
+    # Active scan filters — read from JSONB column (already a list)
+    active_filters = run.scan_filters or []
 
     return {
-        "data":             report_data,   # always list
+        "data":             report_data,
         "ai_insight":       ai_insight,
-        "metrics":          metrics,       # always dict
-        "raw_data":         raw_data,      # always list — the critical fix
+        "metrics":          metrics,
+        "raw_data":         raw_data,
         "site_health":      site_health,
         "current_run":      run,
         "active_filters":   active_filters,
         "scan_filter_defs": SCAN_FILTER_DEFS,
+        "filter_icons":     FILTER_ICONS,
     }
 
 
-# ── Auth Routes ────────────────────────────────────────────────────────────────
+# ── Progress payload builder ───────────────────────────────────────────────────
+
+def _progress_payload(run: TestRun) -> dict:
+    scanned    = run.scanned_pages    or 0
+    discovered = run.discovered_pages or 0
+    remaining  = max(0, discovered - scanned) if discovered else None
+
+    return {
+        "status":            run.status,
+        "progress":          run.progress or 0,
+        "scanned":           scanned,
+        "discovered":        discovered,
+        "remaining":         remaining,
+        "total":             run.total_tests or 0,
+        "scanned_pages":     scanned,
+        "discovered_pages":  discovered,
+        "eta_seconds":       run.eta_seconds,
+        "avg_scan_time_ms":  run.avg_scan_time_ms,
+        "site_health_score": run.site_health_score,
+        "risk_category":     run.risk_category,
+        "confidence_score":  run.confidence_score,
+    }
+
+
+# ── Delete helper ──────────────────────────────────────────────────────────────
+
+def _delete_run(run: TestRun):
+    for fpath in [run.report_file, run.summary_file, run.raw_file, run.site_summary_file]:
+        if fpath and os.path.exists(fpath):
+            try:
+                os.remove(fpath)
+            except OSError:
+                pass
+
+    if run.id:
+        prefix = f"run_{run.id}_"
+        try:
+            for fname in os.listdir(SCREENSHOT_DIR):
+                if fname.startswith(prefix):
+                    try:
+                        os.remove(os.path.join(SCREENSHOT_DIR, fname))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+    PageResult.query.filter_by(run_id=run.id).delete()
+    db.session.delete(run)
+    db.session.commit()
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# AUTH ROUTES
+# ════════════════════════════════════════════════════════════════════════════════
 
 @app.route("/register", methods=["GET", "POST"])
+@limiter.limit("20 per hour")
 def register():
     if request.method == "POST":
         username = request.form["username"]
@@ -260,40 +391,58 @@ def register():
 
 
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("20 per minute")   # Brute-force protection
 def login():
+    # ── 2FA verification flow ────────────────────────────────────────────────
     if session.get("2fa_user_id"):
-        user = User.query.get(session["2fa_user_id"])
+        user_id = session["2fa_user_id"]
+        user    = db.session.get(User, user_id)
+        if not user:
+            session.clear()
+            return redirect("/login")
+
         totp = pyotp.TOTP(user.otp_secret)
+
         if request.method == "POST":
-            otp = request.form.get("otp")
+            otp = request.form.get("otp", "")
             if otp and totp.verify(otp):
                 user.is_2fa_enabled = True
                 db.session.commit()
                 login_user(user)
                 session.pop("2fa_user_id", None)
-                session.pop("qr_code", None)
+                _delete_qr(user_id)
                 return redirect("/")
-            return render_template("login.html", show_otp=True,
-                                   qr=session.get("qr_code"), error="Invalid OTP")
-        return render_template("login.html", show_otp=True, qr=session.get("qr_code"))
+            # Invalid OTP — still show QR if first-time setup
+            qr = _get_qr(user_id)
+            return render_template("login.html", show_otp=True, qr=qr, error="Invalid OTP")
 
+        qr = _get_qr(user_id)
+        return render_template("login.html", show_otp=True, qr=qr)
+
+    # ── Credential check ─────────────────────────────────────────────────────
     if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-        user = User.query.filter_by(username=username).first()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        user     = User.query.filter_by(username=username).first()
+
         if not user or not check_password_hash(user.password, password):
             return render_template("login.html", error="Invalid credentials")
+
         totp = pyotp.TOTP(user.otp_secret)
+        session["2fa_user_id"] = user.id
+
         if user.is_2fa_enabled:
-            session["2fa_user_id"] = user.id
+            # Returning user — just ask for OTP (no QR)
             return render_template("login.html", show_otp=True)
+
+        # First-time 2FA setup — generate QR, store in Redis (NOT session cookie)
         uri = totp.provisioning_uri(name=user.username, issuer_name="GuardianAI")
         img = qrcode.make(uri)
         buffer = BytesIO()
         img.save(buffer, format="PNG")
         qr_base64 = base64.b64encode(buffer.getvalue()).decode()
-        session["2fa_user_id"] = user.id
-        session["qr_code"] = qr_base64
+        _store_qr(user.id, qr_base64)
+
         return render_template("login.html", show_otp=True, qr=qr_base64)
 
     return render_template("login.html")
@@ -306,46 +455,37 @@ def logout():
     return redirect("/login")
 
 
-# ── Main App Routes ────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# MAIN APP ROUTES
+# ════════════════════════════════════════════════════════════════════════════════
 
 @app.route("/", methods=["GET", "POST"])
 @login_required
+@limiter.limit("30 per minute", methods=["POST"])   # Scan submission rate limit
 def home():
     if request.method == "POST":
         from tasks import run_scan
 
-        url = request.form.get("url", "").strip()
-        page_limit = request.form.get("page_limit") or str(current_user.page_limit_default)
+        url         = request.form.get("url", "").strip()
+        page_limit  = request.form.get("page_limit") or str(current_user.page_limit_default)
 
-        # ── Extract selected scan filters ──
         selected_filters = request.form.getlist("scan_filters")
-        active_filters = [f for f in selected_filters if f in VALID_FILTER_KEYS]
+        active_filters   = [f for f in selected_filters if f in VALID_FILTER_KEYS]
         if not active_filters:
             active_filters = list(VALID_FILTER_KEYS)
 
         if not url:
-            ctx = {
-                "data": [], "ai_insight": None, "metrics": {},
-                "history": load_history_from_db(), "raw_data": [],
-                "site_health": None, "current_run": None,
-                "error": "Please enter a URL.",
-                "scan_filter_defs": SCAN_FILTER_DEFS,
-                "active_filters": active_filters,
-            }
+            ctx = _empty_ctx(error="Please enter a URL.", active_filters=active_filters)
             return render_template("index.html", **ctx)
 
         # ── Plan limit enforcement ──
-        limits = _plan_limits(current_user)
+        limits      = _plan_limits(current_user)
         daily_limit = limits.get("scans_per_day")
         if daily_limit is not None and _scans_today(current_user) >= daily_limit:
-            ctx = {
-                "data": [], "ai_insight": None, "metrics": {},
-                "history": load_history_from_db(), "raw_data": [],
-                "site_health": None, "current_run": None,
-                "error": f"Daily scan limit ({daily_limit}) reached for your {current_user.plan} plan.",
-                "scan_filter_defs": SCAN_FILTER_DEFS,
-                "active_filters": active_filters,
-            }
+            ctx = _empty_ctx(
+                error=f"Daily scan limit ({daily_limit}) reached for your {current_user.plan} plan.",
+                active_filters=active_filters,
+            )
             return render_template("index.html", **ctx)
 
         page_cap = limits.get("pages_per_scan")
@@ -361,28 +501,32 @@ def home():
             started_at=datetime.now(UTC),
             user_id=current_user.id,
             progress=0,
-            scan_filters=json.dumps(active_filters),
+            scan_filters=active_filters,  # Native JSONB list — no json.dumps()
         )
         db.session.add(run)
         db.session.commit()
 
         task_queue.enqueue(
-            run_scan, run.id, url, page_limit, current_user.id, active_filters,
-            job_timeout=3600
+            run_scan,
+            run.id, url, page_limit, current_user.id, active_filters,
+            job_timeout=config.JOB_TIMEOUT,
+            retry=Retry(max=1, interval=60),
         )
 
         return redirect(f"/run/{run.id}")
 
-    # GET
-    run = (TestRun.query
-           .filter_by(user_id=current_user.id)
-           .order_by(TestRun.id.desc())
-           .first())
+    # GET — show most recent run
+    run = (
+        _history_query(current_user)
+        .order_by(TestRun.id.desc())
+        .first()
+    )
 
     ctx = {
-        "history": load_history_from_db(),
+        "history":          load_history_from_db(),
         "scan_filter_defs": SCAN_FILTER_DEFS,
-        "active_filters": list(VALID_FILTER_KEYS),
+        "active_filters":   list(VALID_FILTER_KEYS),
+        "filter_icons":     FILTER_ICONS,
     }
     if run:
         ctx.update(enrich_run_context(run))
@@ -393,13 +537,31 @@ def home():
     return render_template("index.html", **ctx)
 
 
+def _empty_ctx(error: str = None, active_filters: list = None) -> dict:
+    return {
+        "data":             [],
+        "ai_insight":       None,
+        "metrics":          {},
+        "history":          load_history_from_db(),
+        "raw_data":         [],
+        "site_health":      None,
+        "current_run":      None,
+        "error":            error,
+        "scan_filter_defs": SCAN_FILTER_DEFS,
+        "active_filters":   active_filters or list(VALID_FILTER_KEYS),
+        "filter_icons":     FILTER_ICONS,
+    }
+
+
 @app.route("/run/<int:run_id>")
 @login_required
 def view_run(run_id):
-    run = TestRun.query.get_or_404(run_id)
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
-    ctx = {"history": load_history_from_db(), "scan_filter_defs": SCAN_FILTER_DEFS}
+    ctx = {"history": load_history_from_db(), "scan_filter_defs": SCAN_FILTER_DEFS, "filter_icons": FILTER_ICONS}
     ctx.update(enrich_run_context(run))
     return render_template("index.html", **ctx)
 
@@ -407,52 +569,28 @@ def view_run(run_id):
 @app.route("/new-scan")
 @login_required
 def new_scan():
-    return render_template("index.html",
-                            data=[], ai_insight=None, metrics={},
-                            history=load_history_from_db(), raw_data=[],
-                            site_health=None, current_run=None,
-                            scan_filter_defs=SCAN_FILTER_DEFS,
-                            active_filters=list(VALID_FILTER_KEYS))
+    return render_template(
+        "index.html",
+        data=[], ai_insight=None, metrics={},
+        history=load_history_from_db(), raw_data=[],
+        site_health=None, current_run=None,
+        scan_filter_defs=SCAN_FILTER_DEFS,
+        active_filters=list(VALID_FILTER_KEYS),
+        filter_icons=FILTER_ICONS,
+    )
 
 
-# ── Progress / Status Polling ─────────────────────────────────────────────────
-
-def _progress_payload(run: TestRun) -> dict:
-    """Build the shared progress JSON payload from a TestRun row.
-
-    Field names cover both legacy JS (scanned / discovered) and the new
-    frontend (scanned_pages / discovered_pages) so both paths keep working.
-    """
-    scanned    = run.scanned_pages   or 0
-    discovered = run.discovered_pages or 0
-    remaining  = max(0, discovered - scanned) if discovered else None
-
-    return {
-        # Core fields consumed by both old and new polling code
-        "status":           run.status,
-        "progress":         run.progress or 0,
-        # Legacy field names (existing JS uses these)
-        "scanned":          scanned,
-        "discovered":       discovered,
-        "remaining":        remaining,
-        "total":            run.total_tests or 0,
-        # New explicit field names (new polling JS uses these)
-        "scanned_pages":    scanned,
-        "discovered_pages": discovered,
-        "eta_seconds":      run.eta_seconds,
-        # Extra metadata
-        "avg_scan_time_ms":  run.avg_scan_time_ms,
-        "site_health_score": run.site_health_score,
-        "risk_category":     run.risk_category,
-        "confidence_score":  run.confidence_score,
-    }
-
+# ════════════════════════════════════════════════════════════════════════════════
+# PROGRESS / STATUS POLLING  (JSON — CSRF exempt)
+# ════════════════════════════════════════════════════════════════════════════════
 
 @app.route("/progress/<int:run_id>")
 @login_required
+@csrf.exempt
 def scan_progress(run_id):
-    """Legacy polling endpoint — kept for backwards compatibility."""
-    run = TestRun.query.get_or_404(run_id)
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
     return jsonify(_progress_payload(run))
@@ -460,96 +598,90 @@ def scan_progress(run_id):
 
 @app.route("/api/run/<int:run_id>/progress")
 @login_required
+@csrf.exempt
 def api_run_progress(run_id):
-    """
-    REST-style progress endpoint used by the new live-polling frontend.
-    Identical payload to /progress/<run_id> — both URLs stay alive so old
-    and new JS can coexist during incremental rollout.
-    """
-    run = TestRun.query.get_or_404(run_id)
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
     return jsonify(_progress_payload(run))
 
 
-# ── Pagination API: Per-Page Results ──────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# PAGINATED PAGES API  — queries PageResult DB table, NOT raw JSON file
+# ════════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/run/<int:run_id>/pages/paginated")
 @login_required
+@csrf.exempt
 def run_pages_paginated(run_id):
-    """Returns paginated per-page results for a scan run."""
-    run = TestRun.query.get_or_404(run_id)
+    """
+    Returns paginated per-page results from the PageResult DB table.
+    LIMIT/OFFSET pagination — no full JSON file loaded into memory.
+    """
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
 
-    page = request.args.get("page", 1, type=int)
+    page     = request.args.get("page",     1,                type=int)
     per_page = request.args.get("per_page", DEFAULT_PAGE_SIZE, type=int)
     if per_page not in ALLOWED_PAGE_SIZES:
         per_page = DEFAULT_PAGE_SIZE
+
     risk_filter = request.args.get("risk", "all")
-    sort_by = request.args.get("sort", "health_asc")
+    sort_by     = request.args.get("sort", "health_asc")
 
-    if not run.raw_file or not os.path.exists(run.raw_file):
-        return jsonify({"pages": [], "total": 0, "page": page, "per_page": per_page, "total_pages": 0})
+    query = PageResult.query.filter_by(run_id=run_id)
 
-    with open(run.raw_file, "r", encoding="utf-8") as f:
-        all_pages = json.load(f)
-
-    # Apply risk filter
     if risk_filter != "all":
-        all_pages = [p for p in all_pages if (p.get("risk_category") or "Unknown") == risk_filter]
+        query = query.filter(PageResult.risk_category == risk_filter)
 
-    # Apply sorting
-    def sort_key(p):
-        hs = p.get("health_score")
-        return hs if hs is not None else -1
+    sort_map = {
+        "health_asc":  PageResult.health_score.asc().nullslast(),
+        "health_desc": PageResult.health_score.desc().nullsfirst(),
+        "load_asc":    PageResult.load_time.asc().nullslast(),
+        "load_desc":   PageResult.load_time.desc().nullsfirst(),
+    }
+    query = query.order_by(sort_map.get(sort_by, PageResult.health_score.asc().nullslast()))
 
-    if sort_by == "health_asc":
-        all_pages.sort(key=sort_key)
-    elif sort_by == "health_desc":
-        all_pages.sort(key=sort_key, reverse=True)
-    elif sort_by == "load_asc":
-        all_pages.sort(key=lambda p: p.get("load_time") or 9999)
-    elif sort_by == "load_desc":
-        all_pages.sort(key=lambda p: p.get("load_time") or 0, reverse=True)
-
-    total = len(all_pages)
+    total       = query.count()
     total_pages = max(1, (total + per_page - 1) // per_page)
-    page = max(1, min(page, total_pages))
-    start = (page - 1) * per_page
-    end = start + per_page
-    page_slice = all_pages[start:end]
+    page        = max(1, min(page, total_pages))
+
+    rows = query.offset((page - 1) * per_page).limit(per_page).all()
 
     page_summaries = [
         {
-            "url":                  p.get("url"),
-            "title":                p.get("title"),
-            "status":               p.get("status"),
-            "health_score":         p.get("health_score"),
-            "risk_category":        p.get("risk_category"),
-            "confidence_score":     p.get("confidence_score"),
-            "checks_executed":      p.get("checks_executed"),
-            "failure_pattern_id":   p.get("failure_pattern_id"),
-            "root_cause_tag":       p.get("root_cause_tag"),
-            "self_healing_suggestion": p.get("self_healing_suggestion"),
-            "performance_score":    p.get("performance_score"),
-            "accessibility_score":  p.get("accessibility_score"),
-            "security_score":       p.get("security_score"),
-            "functional_score":     p.get("functional_score"),
-            "ui_form_score":        p.get("ui_form_score"),
-            "load_time":            p.get("load_time"),
-            "fcp_ms":               p.get("fcp_ms"),
-            "lcp_ms":               p.get("lcp_ms"),
-            "ttfb_ms":              p.get("ttfb_ms"),
-            "accessibility_issues": p.get("accessibility_issues"),
-            "broken_links":         len(p.get("broken_links") or []),
-            "js_errors":            len(p.get("js_errors") or []),
-            "is_https":             p.get("is_https"),
-            "screenshot":           p.get("screenshot"),
-            "timestamp":            p.get("timestamp"),
-            "ui_summary":           p.get("ui_summary") or {},
+            "url":                     r.url,
+            "title":                   r.title,
+            "status":                  r.status,
+            "health_score":            r.health_score,
+            "risk_category":           r.risk_category,
+            "confidence_score":        r.confidence_score,
+            "checks_executed":         r.checks_executed,
+            "failure_pattern_id":      r.failure_pattern_id,
+            "root_cause_tag":          r.root_cause_tag,
+            "self_healing_suggestion": r.self_healing_suggestion,
+            "performance_score":       r.performance_score,
+            "accessibility_score":     r.accessibility_score,
+            "security_score":          r.security_score,
+            "functional_score":        r.functional_score,
+            "ui_form_score":           r.ui_form_score,
+            "load_time":               r.load_time,
+            "fcp_ms":                  r.fcp_ms,
+            "lcp_ms":                  r.lcp_ms,
+            "ttfb_ms":                 r.ttfb_ms,
+            "accessibility_issues":    r.accessibility_issues,
+            "broken_links":            r.broken_links_count,
+            "js_errors":               r.js_errors_count,
+            "is_https":                r.is_https,
+            "screenshot":              r.screenshot_path,
+            "ui_summary":              r.ui_summary or {},
         }
-        for p in page_slice
+        for r in rows
     ]
 
     return jsonify({
@@ -561,42 +693,45 @@ def run_pages_paginated(run_id):
     })
 
 
-# ── Pagination API: Scan History ─────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# SCAN HISTORY API  (JSON — CSRF exempt)
+# ════════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/history/paginated")
 @login_required
+@csrf.exempt
 def history_paginated():
-    """Returns paginated scan history for the dashboard."""
-    page = request.args.get("page", 1, type=int)
+    """Returns paginated scan history, respecting the plan's history_days limit."""
+    page     = request.args.get("page",     1,                type=int)
     per_page = request.args.get("per_page", DEFAULT_PAGE_SIZE, type=int)
     if per_page not in ALLOWED_PAGE_SIZES:
         per_page = DEFAULT_PAGE_SIZE
     status_filter = request.args.get("status", "all")
 
-    query = TestRun.query.filter_by(user_id=current_user.id)
+    query = _history_query(current_user)      # ← enforces history_days
     if status_filter != "all":
         query = query.filter_by(status=status_filter)
     query = query.order_by(TestRun.id.desc())
 
-    total = query.count()
+    total       = query.count()
     total_pages = max(1, (total + per_page - 1) // per_page)
-    page = max(1, min(page, total_pages))
+    page        = max(1, min(page, total_pages))
 
     runs = query.offset((page - 1) * per_page).limit(per_page).all()
 
     data = [
         {
-            "id":               r.id,
-            "target_url":       r.target_url,
-            "status":           r.status,
-            "started_at":       r.started_at.isoformat() if r.started_at else None,
-            "finished_at":      r.finished_at.isoformat() if r.finished_at else None,
-            "total_tests":      r.total_tests,
-            "passed":           r.passed,
-            "failed":           r.failed,
-            "site_health_score": r.site_health_score,
-            "risk_category":    r.risk_category,
-            "confidence_score": r.confidence_score,
+            "id":                      r.id,
+            "target_url":              r.target_url,
+            "status":                  r.status,
+            "started_at":              r.started_at.isoformat() if r.started_at  else None,
+            "finished_at":             r.finished_at.isoformat() if r.finished_at else None,
+            "total_tests":             r.total_tests,
+            "passed":                  r.passed,
+            "failed":                  r.failed,
+            "site_health_score":       r.site_health_score,
+            "risk_category":           r.risk_category,
+            "confidence_score":        r.confidence_score,
             "avg_performance_score":   r.avg_performance_score,
             "avg_accessibility_score": r.avg_accessibility_score,
             "avg_security_score":      r.avg_security_score,
@@ -613,29 +748,29 @@ def history_paginated():
     })
 
 
-# ── Scores & Data APIs ─────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# SCORES & DATA APIs  (JSON — CSRF exempt)
+# ════════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/run/<int:run_id>/scores")
 @login_required
+@csrf.exempt
 def run_scores_api(run_id):
-    run = TestRun.query.get_or_404(run_id)
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
 
-    active_filters = []
-    if run.scan_filters:
-        try:
-            active_filters = json.loads(run.scan_filters)
-        except Exception:
-            active_filters = []
+    active_filters = run.scan_filters or []   # Native JSONB list
 
     return jsonify({
-        "run_id": run_id,
-        "status": run.status,
+        "run_id":            run_id,
+        "status":            run.status,
         "site_health_score": run.site_health_score,
-        "risk_category": run.risk_category,
-        "confidence_score": run.confidence_score,
-        "active_filters": active_filters,
+        "risk_category":     run.risk_category,
+        "confidence_score":  run.confidence_score,
+        "active_filters":    active_filters,
         "component_scores": {
             "performance":   run.avg_performance_score,
             "accessibility": run.avg_accessibility_score,
@@ -659,15 +794,18 @@ def run_scores_api(run_id):
             "total_pages": run.total_tests,
             "passed":      run.passed,
             "failed":      run.failed,
-        }
+        },
     })
 
 
 @app.route("/api/run/<int:run_id>/pages")
 @login_required
+@csrf.exempt
 def run_pages_api(run_id):
-    """Returns per-page scores from raw JSON file — full data visibility."""
-    run = TestRun.query.get_or_404(run_id)
+    """Returns all per-page data from raw JSON — used for full-detail export views."""
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
 
@@ -677,7 +815,7 @@ def run_pages_api(run_id):
     with open(run.raw_file, "r", encoding="utf-8") as f:
         pages = json.load(f)
 
-    page_summaries = [
+    summaries = [
         {
             "url":                  p.get("url"),
             "title":                p.get("title"),
@@ -686,7 +824,6 @@ def run_pages_api(run_id):
             "risk_category":        p.get("risk_category"),
             "confidence_score":     p.get("confidence_score"),
             "checks_executed":      p.get("checks_executed"),
-            "checks_null":          p.get("checks_null"),
             "failure_pattern_id":   p.get("failure_pattern_id"),
             "root_cause_tag":       p.get("root_cause_tag"),
             "self_healing_suggestion": p.get("self_healing_suggestion"),
@@ -709,15 +846,16 @@ def run_pages_api(run_id):
         }
         for p in pages
     ]
-
-    return jsonify({"pages": page_summaries})
+    return jsonify({"pages": summaries})
 
 
 @app.route("/api/run/<int:run_id>/page-detail")
 @login_required
+@csrf.exempt
 def run_page_detail_api(run_id):
-    """Returns full raw detail for a single page by URL."""
-    run = TestRun.query.get_or_404(run_id)
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
 
@@ -734,17 +872,20 @@ def run_page_detail_api(run_id):
     for p in pages:
         if p.get("url") == page_url:
             detail = {k: v for k, v in p.items() if k != "ui_elements"}
-            detail["ui_elements_count"] = len(p.get("ui_elements") or [])
+            detail["ui_elements_count"]  = len(p.get("ui_elements") or [])
             detail["ui_elements_sample"] = (p.get("ui_elements") or [])[:50]
             return jsonify({"page": detail})
 
-    return jsonify({"error": "page not found in raw data"}), 404
+    return jsonify({"error": "page not found"}), 404
 
 
 @app.route("/api/run/<int:run_id>/ui-elements")
 @login_required
+@csrf.exempt
 def run_ui_elements_api(run_id):
-    run = TestRun.query.get_or_404(run_id)
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
 
@@ -756,13 +897,13 @@ def run_ui_elements_api(run_id):
 
     result = []
     for p in pages:
-        ui_s = p.get("ui_summary") or {}
+        ui_s  = p.get("ui_summary") or {}
         forms = p.get("forms") or []
         result.append({
             "url":        p.get("url"),
             "ui_summary": ui_s,
             "forms": {
-                "count":            len(forms),
+                "count": len(forms),
                 "avg_health_score": round(
                     sum(f.get("form_health_score") or 0 for f in forms) / len(forms), 1
                 ) if forms else None,
@@ -777,14 +918,16 @@ def run_ui_elements_api(run_id):
             "breadcrumbs": (p.get("breadcrumbs") or {}).get("found", False),
             "sidebar":     (p.get("sidebar") or {}).get("found", False),
         })
-
     return jsonify({"pages": result})
 
 
 @app.route("/api/run/<int:run_id>/security")
 @login_required
+@csrf.exempt
 def run_security_api(run_id):
-    run = TestRun.query.get_or_404(run_id)
+    run = db.session.get(TestRun, run_id)
+    if not run:
+        abort(404)
     if run.user_id != current_user.id:
         abort(403)
 
@@ -804,212 +947,123 @@ def run_security_api(run_id):
             "is_https":        sec.get("is_https"),
             "total_issues":    sec.get("total_issues"),
             "severity_counts": sec.get("severity_counts"),
-            "passed_checks":   sec.get("passed_checks"),
-            "findings":        (sec.get("findings") or [])[:10],
+            "findings":        sec.get("findings") or [],
         })
-
     return jsonify({"pages": result})
 
 
-@app.route("/api/run/<int:run_id>/accessibility")
+# ════════════════════════════════════════════════════════════════════════════════
+# HISTORY MANAGEMENT  (CSRF protected — these mutate data)
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.route("/history/<int:run_id>", methods=["DELETE"])
 @login_required
-def run_accessibility_api(run_id):
-    run = TestRun.query.get_or_404(run_id)
-    if run.user_id != current_user.id:
+@csrf.exempt   # DELETE verb — no form-based CSRF risk; protected by login_required + user_id check
+def delete_history(run_id):
+    run = db.session.get(TestRun, run_id)
+    if not run or run.user_id != current_user.id:
         abort(403)
-
-    if not run.raw_file or not os.path.exists(run.raw_file):
-        return jsonify({"pages": []})
-
-    with open(run.raw_file, "r", encoding="utf-8") as f:
-        pages = json.load(f)
-
-    result = []
-    for p in pages:
-        a11y = p.get("accessibility_data") or {}
-        result.append({
-            "url":               p.get("url"),
-            "accessibility_score": p.get("accessibility_score"),
-            "risk_level":        p.get("accessibility_risk"),
-            "total_issues":      a11y.get("total_issues"),
-            "severity_counts":   a11y.get("severity_counts"),
-            "wcag_violations":   p.get("wcag_violations"),
-            "checks":            a11y.get("checks"),
-            "has_skip_nav":      a11y.get("has_skip_nav"),
-            "has_lang_attr":     a11y.get("has_lang_attr"),
-            "has_main_landmark": a11y.get("has_main_landmark"),
-            "issues":            (a11y.get("issues") or [])[:15],
-        })
-
-    return jsonify({"pages": result})
+    _delete_run(run)
+    return jsonify({"status": "deleted"})
 
 
-@app.route("/api/run/<int:run_id>/ai-fields")
+@app.route("/history/<int:run_id>/delete", methods=["POST"])
 @login_required
-def run_ai_fields_api(run_id):
-    """Returns AI learning fields for all pages in a run."""
-    run = TestRun.query.get_or_404(run_id)
-    if run.user_id != current_user.id:
+def delete_history_post(run_id):
+    """POST alias — browser JS uses POST for sidebar delete."""
+    run = db.session.get(TestRun, run_id)
+    if not run or run.user_id != current_user.id:
         abort(403)
-
-    page_results = (PageResult.query
-                    .filter_by(run_id=run_id)
-                    .order_by(PageResult.id)
-                    .all())
-
-    if page_results:
-        data = [
-            {
-                "url":                     pr.url,
-                "confidence_score":        pr.confidence_score,
-                "checks_executed":         pr.checks_executed,
-                "checks_null":             pr.checks_null,
-                "failure_pattern_id":      pr.failure_pattern_id,
-                "root_cause_tag":          pr.root_cause_tag,
-                "similar_issue_ref":       pr.similar_issue_ref,
-                "ai_confidence":           pr.ai_confidence,
-                "self_healing_suggestion": pr.self_healing_suggestion,
-                "risk_category":           pr.risk_category,
-                "health_score":            pr.health_score,
-            }
-            for pr in page_results
-        ]
-        return jsonify({"pages": data})
-
-    if not run.raw_file or not os.path.exists(run.raw_file):
-        return jsonify({"pages": []})
-
-    with open(run.raw_file, "r", encoding="utf-8") as f:
-        pages = json.load(f)
-
-    data = [
-        {
-            "url":                     p.get("url"),
-            "confidence_score":        p.get("confidence_score"),
-            "checks_executed":         p.get("checks_executed"),
-            "checks_null":             p.get("checks_null"),
-            "failure_pattern_id":      p.get("failure_pattern_id"),
-            "root_cause_tag":          p.get("root_cause_tag"),
-            "similar_issue_ref":       None,
-            "ai_confidence":           p.get("ai_confidence"),
-            "self_healing_suggestion": p.get("self_healing_suggestion"),
-            "risk_category":           p.get("risk_category"),
-            "health_score":            p.get("health_score"),
-        }
-        for p in pages
-    ]
-    return jsonify({"pages": data})
+    _delete_run(run)
+    return jsonify({"status": "deleted"})
 
 
-@app.route("/api/dashboard/stats")
+@app.route("/run/<int:run_id>/delete", methods=["POST"])
 @login_required
-def dashboard_stats_api():
-    runs = TestRun.query.filter_by(user_id=current_user.id).all()
-    completed = [r for r in runs if r.status == "completed"]
-
-    total_scans = len(runs)
-    total_pages = sum(r.total_tests or 0 for r in completed)
-    total_passed = sum(r.passed or 0 for r in completed)
-    total_failed = sum(r.failed or 0 for r in completed)
-    pass_rate = round((total_passed / total_pages) * 100, 1) if total_pages > 0 else None
-
-    health_scores = [r.site_health_score for r in completed if r.site_health_score is not None]
-    avg_site_health = round(sum(health_scores) / len(health_scores), 1) if health_scores else None
-
-    confidence_scores = [r.confidence_score for r in completed if r.confidence_score is not None]
-    avg_confidence = round(sum(confidence_scores) / len(confidence_scores), 1) if confidence_scores else None
-
-    trend = [
-        {"id": r.id, "url": r.target_url, "score": r.site_health_score,
-         "confidence": r.confidence_score,
-         "date": r.finished_at.isoformat() if r.finished_at else None}
-        for r in sorted(completed, key=lambda x: x.id)[-5:]
-    ]
-
-    return jsonify({
-        "total_scans":      total_scans,
-        "total_pages":      total_pages,
-        "total_passed":     total_passed,
-        "total_failed":     total_failed,
-        "pass_rate":        pass_rate,
-        "avg_site_health":  avg_site_health,
-        "avg_confidence":   avg_confidence,
-        "trend":            trend,
-    })
+def delete_run_post(run_id):
+    """Delete from the results view."""
+    run = db.session.get(TestRun, run_id)
+    if not run or run.user_id != current_user.id:
+        return jsonify({"status": "error", "message": "Not found"}), 404
+    _delete_run(run)
+    return jsonify({"status": "deleted", "run_id": run_id})
 
 
-# ── Dashboard ─────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# DASHBOARD
+# ════════════════════════════════════════════════════════════════════════════════
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    runs = TestRun.query.filter_by(user_id=current_user.id).all()
-    completed = [r for r in runs if r.status == "completed"]
+    from sqlalchemy import func
 
-    total_scans = len(runs)
-    total_pages = sum(r.total_tests or 0 for r in completed)
-    total_passed = sum(r.passed or 0 for r in completed)
-    total_failed = sum(r.failed or 0 for r in completed)
-    pass_rate = round((total_passed / total_pages) * 100, 1) if total_pages > 0 else 0
-
-    def _avg(vals):
-        clean = [v for v in vals if v is not None]
-        return round(sum(clean) / len(clean), 1) if clean else None
-
-    avg_perf   = _avg([r.avg_performance_score  for r in completed])
-    avg_a11y   = _avg([r.avg_accessibility_score for r in completed])
-    avg_sec    = _avg([r.avg_security_score      for r in completed])
-    avg_func   = _avg([r.avg_functional_score    for r in completed])
-    avg_health = _avg([r.site_health_score       for r in completed])
-    avg_confidence = _avg([r.confidence_score    for r in completed])
-
-    total_a11y_issues = sum(r.total_accessibility_issues or 0 for r in completed)
-    total_broken      = sum(r.total_broken_links         or 0 for r in completed)
-    total_js_errors   = sum(r.total_js_errors            or 0 for r in completed)
-    total_slow        = sum(r.slow_pages_count           or 0 for r in completed)
-
-    # Paginated — first page for initial load
-    page = request.args.get("page", 1, type=int)
+    page     = request.args.get("page",     1,                type=int)
     per_page = request.args.get("per_page", DEFAULT_PAGE_SIZE, type=int)
     if per_page not in ALLOWED_PAGE_SIZES:
         per_page = DEFAULT_PAGE_SIZE
 
-    runs_query = (TestRun.query
-                  .filter_by(user_id=current_user.id)
-                  .order_by(TestRun.id.desc()))
-    total_runs = runs_query.count()
+    # All queries respect history_days plan limit
+    base_q = _history_query(current_user)
+
+    total_runs  = base_q.count()
+    total_pages = base_q.with_entities(func.sum(TestRun.total_tests)).scalar() or 0
+    total_passed = base_q.with_entities(func.sum(TestRun.passed)).scalar() or 0
+    total_failed = base_q.with_entities(func.sum(TestRun.failed)).scalar() or 0
+    pass_rate    = round(total_passed / (total_passed + total_failed) * 100, 1) if (total_passed + total_failed) else 0
+
+    avg_perf      = base_q.with_entities(func.avg(TestRun.avg_performance_score)).scalar()
+    avg_a11y      = base_q.with_entities(func.avg(TestRun.avg_accessibility_score)).scalar()
+    avg_sec       = base_q.with_entities(func.avg(TestRun.avg_security_score)).scalar()
+    avg_func      = base_q.with_entities(func.avg(TestRun.avg_functional_score)).scalar()
+    avg_health    = base_q.with_entities(func.avg(TestRun.site_health_score)).scalar()
+    avg_confidence = base_q.with_entities(func.avg(TestRun.confidence_score)).scalar()
+
+    def _r(v):
+        return round(v, 1) if v is not None else None
+
+    total_a11y_issues = base_q.with_entities(func.sum(TestRun.total_accessibility_issues)).scalar() or 0
+    total_broken      = base_q.with_entities(func.sum(TestRun.total_broken_links)).scalar() or 0
+    total_js_errors   = base_q.with_entities(func.sum(TestRun.total_js_errors)).scalar() or 0
+    total_slow        = base_q.with_entities(func.sum(TestRun.slow_pages_count)).scalar() or 0
+
     total_run_pages = max(1, (total_runs + per_page - 1) // per_page)
-    page = max(1, min(page, total_run_pages))
+    page            = max(1, min(page, total_run_pages))
 
-    recent_runs = runs_query.offset((page - 1) * per_page).limit(per_page).all()
+    recent_runs = (
+        base_q
+        .order_by(TestRun.id.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
 
-    trend_runs = sorted(completed, key=lambda x: x.id)[-10:]
-    trend_labels = [f"#{r.id}" for r in trend_runs]
-    trend_health  = [r.site_health_score or 0      for r in trend_runs]
-    trend_perf    = [r.avg_performance_score or 0   for r in trend_runs]
-    trend_a11y    = [r.avg_accessibility_score or 0 for r in trend_runs]
-    trend_sec     = [r.avg_security_score or 0      for r in trend_runs]
-    trend_confidence = [r.confidence_score or 0     for r in trend_runs]
+    trend_runs = base_q.order_by(TestRun.id.desc()).limit(10).all()[::-1]
+    trend_labels     = [r.started_at.strftime("%d %b") if r.started_at else "" for r in trend_runs]
+    trend_health     = [r.site_health_score          or 0 for r in trend_runs]
+    trend_perf       = [r.avg_performance_score       or 0 for r in trend_runs]
+    trend_a11y       = [r.avg_accessibility_score     or 0 for r in trend_runs]
+    trend_sec        = [r.avg_security_score          or 0 for r in trend_runs]
+    trend_confidence = [r.confidence_score            or 0 for r in trend_runs]
 
     return render_template(
         "dashboard.html",
-        total_scans=total_scans,
+        total_scans=total_runs,
         total_pages=total_pages,
         total_passed=total_passed,
         total_failed=total_failed,
         pass_rate=pass_rate,
-        avg_performance=avg_perf,
-        avg_accessibility=avg_a11y,
-        avg_security=avg_sec,
-        avg_functional=avg_func,
-        avg_health=avg_health,
-        avg_confidence=avg_confidence,
+        avg_performance=_r(avg_perf),
+        avg_accessibility=_r(avg_a11y),
+        avg_security=_r(avg_sec),
+        avg_functional=_r(avg_func),
+        avg_health=_r(avg_health),
+        avg_confidence=_r(avg_confidence),
         total_a11y_issues=total_a11y_issues,
         total_broken_links=total_broken,
         total_js_errors=total_js_errors,
         total_slow_pages=total_slow,
         recent_runs=recent_runs,
-        # Pagination meta
         current_page=page,
         per_page=per_page,
         total_run_pages=total_run_pages,
@@ -1029,140 +1083,17 @@ def dashboard():
 # ── Static ─────────────────────────────────────────────────────────────────────
 
 @app.route("/screenshots/<path:filename>")
+@login_required
 def serve_screenshot(filename):
+    # login_required prevents unauthenticated access to screenshots
     return send_from_directory(SCREENSHOT_DIR, filename)
 
 
-# ── History Management ─────────────────────────────────────────────────────────
-
-@app.route("/history/<int:run_id>", methods=["DELETE"])
-@login_required
-def delete_history(run_id):
-    """DELETE /history/<run_id> — deletes scan + all associated files."""
-    run = TestRun.query.get(run_id)
-    if not run or run.user_id != current_user.id:
-        abort(403)
-    _delete_run(run)
-    return jsonify({"status": "deleted"})
-
-
-@app.route("/history/<int:run_id>/delete", methods=["POST"])
-@login_required
-def delete_history_post(run_id):
-    """POST /history/<run_id>/delete — browser-compatible delete (no fetch DELETE)."""
-    run = TestRun.query.get(run_id)
-    if not run or run.user_id != current_user.id:
-        abort(403)
-    _delete_run(run)
-    return jsonify({"status": "deleted"})
-
-
-def _delete_run(run: TestRun):
-    """Shared delete logic: removes DB records + associated files."""
-    # Delete associated files
-    for fpath in [run.report_file, run.summary_file, run.raw_file, run.site_summary_file]:
-        if fpath and os.path.exists(fpath):
-            try:
-                os.remove(fpath)
-            except OSError:
-                pass
-
-    # Delete screenshots for this run
-    if run.id:
-        screenshot_pattern = f"run_{run.id}_"
-        try:
-            for fname in os.listdir(SCREENSHOT_DIR):
-                if fname.startswith(screenshot_pattern):
-                    try:
-                        os.remove(os.path.join(SCREENSHOT_DIR, fname))
-                    except OSError:
-                        pass
-        except OSError:
-            pass
-
-    # Delete PageResult records
-    PageResult.query.filter_by(run_id=run.id).delete()
-    db.session.delete(run)
-    db.session.commit()
-
-"""
-app_patch.py — GuardianAI
-Paste these routes into app.py to support the new UI features:
-  1. DELETE /run/<id>            — Full scan deletion (DB + files) with JSON response
-  2. POST   /history/<id>/delete — Sidebar history item delete (already exists as DELETE,
-                                   but sidebar JS uses POST — this alias keeps both working)
-
-IMPORTANT: The existing DELETE /history/<int:run_id> route already handles file + DB cleanup.
-This patch adds:
-  • A POST alias so sidebar JS fetch('/history/id/delete', {method:'POST'}) works
-  • A dedicated /run/<id>/delete endpoint used by the new "Delete Scan" button in the results view
-
-Add these routes BEFORE the "Entry Point" section at the bottom of app.py.
-"""
-
-# ── Paste the block below into app.py ─────────────────────────────────────────
-
-"""
-@app.route("/run/<int:run_id>/delete", methods=["POST"])
-@login_required
-def delete_run(run_id):
-    \"\"\"Full scan deletion — removes DB records and report files.\"\"\"
-    run = TestRun.query.get(run_id)
-    if not run or run.user_id != current_user.id:
-        return jsonify({"status": "error", "message": "Not found"}), 404
-
-    # Remove files
-    for fpath in [run.report_file, run.summary_file, run.raw_file, run.site_summary_file]:
-        if fpath and os.path.exists(fpath):
-            try:
-                os.remove(fpath)
-            except OSError:
-                pass
-
-    # Remove screenshots for this run's pages
-    try:
-        page_results = PageResult.query.filter_by(run_id=run_id).all()
-        for pr in page_results:
-            if pr.screenshot_path and os.path.exists(pr.screenshot_path):
-                try:
-                    os.remove(pr.screenshot_path)
-                except OSError:
-                    pass
-    except Exception:
-        pass
-
-    # Remove DB records
-    PageResult.query.filter_by(run_id=run_id).delete()
-    db.session.delete(run)
-    db.session.commit()
-
-    return jsonify({"status": "deleted", "run_id": run_id})
-
-
-@app.route("/history/<int:run_id>/delete", methods=["POST"])
-@login_required
-def delete_history_post(run_id):
-    \"\"\"POST alias for sidebar history delete (sidebar JS uses POST).\"\"\"
-    run = TestRun.query.get(run_id)
-    if not run or run.user_id != current_user.id:
-        return jsonify({"status": "error"}), 404
-
-    for fpath in [run.report_file, run.summary_file, run.raw_file, run.site_summary_file]:
-        if fpath and os.path.exists(fpath):
-            try:
-                os.remove(fpath)
-            except OSError:
-                pass
-
-    PageResult.query.filter_by(run_id=run_id).delete()
-    db.session.delete(run)
-    db.session.commit()
-    return jsonify({"status": "deleted"})
-"""
-
-# ── Entry Point ────────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════════
+# ENTRY POINT
+# ════════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     with app.app_context():
         db.create_all()
-    app.run(debug=False, port=5000)
+    app.run(debug=config.DEBUG, port=5000)

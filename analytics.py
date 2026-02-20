@@ -1,109 +1,157 @@
 """
-Analytics Module — GuardianAI
-Computes display metrics from Excel report records.
-All values derived from real crawl data. Nothing estimated.
+analytics.py — GuardianAI
+Dashboard metrics derived from DB aggregate fields stored on TestRun.
+No Excel file reads, no Python-side aggregation loops.
+
+generate_metrics_from_run(run) → primary function for dashboard display.
+generate_metrics(records)      → kept for legacy export/Excel compatibility only.
 """
 
 from collections import Counter
+from models import db  # shared SQLAlchemy instance
 
 
-def generate_metrics(records):
+# ── Primary: DB-backed metrics (fast, no file I/O) ──────────────────────────
+
+def generate_metrics_from_run(run) -> dict:
     """
-    Takes report rows (from Excel/dict) and returns summary metrics
-    for the frontend. All None-safe.
+    Produces display metrics directly from TestRun aggregate columns.
+    All values were computed and stored when the scan completed.
+    Zero file reads. Zero Python aggregation.
+
+    Args:
+        run: TestRun model instance (must be fully persisted / status=completed).
+
+    Returns:
+        Metrics dict compatible with the frontend template context.
+    """
+    if run is None:
+        return {}
+
+    total = run.total_tests or 0
+    passed = run.passed or 0
+    failed = run.failed or 0
+
+    # avg_load_time — aggregate from PageResult records (not stored at run level)
+    from models import PageResult
+    from sqlalchemy import func as sqlfunc
+    avg_load = db.session.query(
+        sqlfunc.avg(PageResult.load_time)
+    ).filter(
+        PageResult.run_id == run.id,
+        PageResult.load_time.isnot(None)
+    ).scalar()
+    avg_load = round(avg_load, 2) if avg_load is not None else None
+    slow_pages = run.slow_pages_count or 0
+
+    return {
+        "total_pages":        total,
+        "passed":             passed,
+        "failed":             failed,
+        "active_pages":       passed,          # alias used by index.html template
+        "not_found_pages":    failed,          # alias used by index.html template
+        "pass_rate":          round((passed / total * 100), 1) if total else 0,
+        "avg_load_time":      avg_load,
+        "slow_pages":         slow_pages,
+        "avg_health":         round(run.site_health_score or 0, 1),
+        "avg_performance":    round(run.avg_performance_score   or 0, 1),
+        "avg_accessibility":  round(run.avg_accessibility_score or 0, 1),
+        "avg_security":       round(run.avg_security_score      or 0, 1),
+        "avg_functional":     round(run.avg_functional_score    or 0, 1),
+        "avg_ui_form":        round(run.avg_ui_form_score       or 0, 1),
+        "confidence_score":   round(run.confidence_score        or 0, 1),
+        "total_a11y_issues":  run.total_accessibility_issues or 0,
+        "total_broken_links": run.total_broken_links          or 0,
+        "total_js_errors":    run.total_js_errors             or 0,
+        "risk_category":      run.risk_category,
+        "score_distribution": {
+            "Excellent":       run.excellent_pages       or 0,
+            "Good":            run.good_pages            or 0,
+            "Needs Attention": run.needs_attention_pages or 0,
+            "Critical":        run.critical_pages        or 0,
+        },
+    }
+
+
+# ── Legacy: Excel-record-based aggregation (export compatibility only) ────────
+
+def generate_metrics(records: list) -> dict:
+    """
+    Legacy function: takes report rows (list of dicts from Excel/DataFrame)
+    and returns summary metrics. Still used when loading the Excel export.
+    Do NOT use this for the live dashboard — use generate_metrics_from_run().
     """
     if not records:
-        return None
+        return {}
 
-    statuses = []
-    load_times = []
-    health_scores = []
-    perf_scores = []
-    a11y_scores = []
-    sec_scores = []
-    a11y_issues = []
-    broken_link_counts = []
-    js_error_counts = []
+    statuses       = []
+    load_times     = []
+    health_scores  = []
+    perf_scores    = []
+    a11y_scores    = []
+    sec_scores     = []
+    a11y_issues    = []
+    broken_links   = []
+    js_errors      = []
 
     for r in records:
-        # HTTP status
         try:
             statuses.append(int(r.get("Status", 0)))
         except (TypeError, ValueError):
             statuses.append(0)
 
-        # Load time
         try:
             val = r.get("Load Time (s)", r.get("Load Time", 0))
             load_times.append(float(val))
         except (TypeError, ValueError):
             load_times.append(0.0)
 
-        # Health score
-        try:
-            hs = r.get("Health Score")
-            if hs not in (None, "", "None"):
-                health_scores.append(float(hs))
-        except (TypeError, ValueError):
-            pass
-
-        # Component scores
-        for key, target_list in [
-            ("Performance Score", perf_scores),
+        for key, target in [
+            ("Health Score",        health_scores),
+            ("Performance Score",   perf_scores),
             ("Accessibility Score", a11y_scores),
-            ("Security Score", sec_scores),
+            ("Security Score",      sec_scores),
         ]:
             try:
-                val = r.get(key)
-                if val not in (None, "", "None"):
-                    target_list.append(float(val))
+                v = r.get(key)
+                if v not in (None, "", "None"):
+                    target.append(float(v))
             except (TypeError, ValueError):
                 pass
 
-        # Issue counts
-        try:
-            ai = r.get("Accessibility Issues", 0)
-            a11y_issues.append(int(float(ai)) if ai not in (None, "", "None") else 0)
-        except (TypeError, ValueError):
-            a11y_issues.append(0)
-
-        try:
-            bl = r.get("Broken Links", 0)
-            broken_link_counts.append(int(float(bl)) if bl not in (None, "", "None") else 0)
-        except (TypeError, ValueError):
-            broken_link_counts.append(0)
-
-        try:
-            je = r.get("JS Errors", 0)
-            js_error_counts.append(int(float(je)) if je not in (None, "", "None") else 0)
-        except (TypeError, ValueError):
-            js_error_counts.append(0)
+        for key, target in [
+            ("Accessibility Issues", a11y_issues),
+            ("Broken Links",         broken_links),
+            ("JS Errors",            js_errors),
+        ]:
+            try:
+                v = r.get(key, 0)
+                target.append(int(float(v)) if v not in (None, "", "None") else 0)
+            except (TypeError, ValueError):
+                target.append(0)
 
     counter = Counter(statuses)
-    avg_load = round(sum(load_times) / len(load_times), 2) if load_times else None
-    slow_pages = sum(1 for t in load_times if t > 3.0)
+    total   = len(records)
+    passed  = counter.get(200, 0)
+    failed  = total - passed
+    slow    = sum(1 for t in load_times if t > 3)
 
     def _avg(lst):
         return round(sum(lst) / len(lst), 1) if lst else None
 
     return {
-        "total_pages": len(records),
-        "active_pages": counter.get(200, 0),
-        "not_found_pages": counter.get(404, 0),
-        "server_errors": sum(v for k, v in counter.items() if 500 <= k < 600),
-        "avg_load_time": avg_load,
-        "slow_pages": slow_pages,
-        "total_a11y_issues": sum(a11y_issues),
-        "total_broken_links": sum(broken_link_counts),
-        "total_js_errors": sum(js_error_counts),
-        "avg_health_score": _avg(health_scores),
-        "avg_performance_score": _avg(perf_scores),
-        "avg_accessibility_score": _avg(a11y_scores),
-        "avg_security_score": _avg(sec_scores),
-        "score_distribution": {
-            "Excellent": sum(1 for s in health_scores if s >= 90),
-            "Good": sum(1 for s in health_scores if 75 <= s < 90),
-            "Needs Attention": sum(1 for s in health_scores if 50 <= s < 75),
-            "Critical": sum(1 for s in health_scores if s < 50),
-        }
+        "total_pages":        total,
+        "passed":             passed,
+        "failed":             failed,
+        "pass_rate":          round(passed / total * 100, 1) if total else 0,
+        "avg_load_time":      _avg(load_times),
+        "slow_pages":         slow,
+        "avg_health":         _avg(health_scores),
+        "avg_performance":    _avg(perf_scores),
+        "avg_accessibility":  _avg(a11y_scores),
+        "avg_security":       _avg(sec_scores),
+        "total_a11y_issues":  sum(a11y_issues),
+        "total_broken_links": sum(broken_links),
+        "total_js_errors":    sum(js_errors),
+        "status_counts":      dict(counter),
     }

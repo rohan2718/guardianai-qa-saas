@@ -73,18 +73,26 @@ def compute_confidence_score(page_data: dict, active_filters: list = None) -> di
     # If no filter passed, expect all
     expected_checks = POSSIBLE_CHECKS[:]
     if active_filters:
-        # Map filter names to check keys
+        # Map filter keys (must match VALID_FILTER_KEYS in app.py) to check fields
         filter_check_map = {
-            "performance": ["performance_score", "fcp_ms", "lcp_ms", "ttfb_ms", "load_time"],
-            "accessibility": ["accessibility_score", "accessibility_issues"],
-            "security": ["security_score", "is_https"],
-            "functional": ["functional_score"],
-            "ui_form": ["ui_form_score"],
+            "performance":      ["performance_score", "fcp_ms", "lcp_ms", "ttfb_ms", "load_time"],
+            "accessibility_audit": ["accessibility_score", "accessibility_issues"],
+            "security":         ["security_score", "is_https"],
+            "functional":       ["functional_score"],
+            "ui_elements":      ["ui_form_score"],      # ui_form_score covers both ui+form
+            "form_validation":  ["ui_form_score"],
         }
         expected_checks = []
         for f in active_filters:
             expected_checks.extend(filter_check_map.get(f, []))
-        expected_checks = list(set(expected_checks)) or POSSIBLE_CHECKS[:]
+        # Deduplicate while preserving meaning (ui_form_score may appear twice)
+        seen = set()
+        deduped = []
+        for c in expected_checks:
+            if c not in seen:
+                seen.add(c)
+                deduped.append(c)
+        expected_checks = deduped or POSSIBLE_CHECKS[:]
 
     executed = 0
     null_count = 0

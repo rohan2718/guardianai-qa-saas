@@ -40,9 +40,9 @@ def analyze_form(form_raw: dict) -> dict:
 
     # ── 2. Required field detection ──
     for field in fields:
-        field_type = field.get("type", "")
-        field_name = field.get("name", "")
-        field_tag = field.get("tag", "input")
+        field_type = field.get("type") or ""
+        field_name = field.get("name") or ""
+        field_tag = field.get("tag") or "input"
 
         # Skip non-interactive
         if field_type in ("hidden", "submit", "button", "reset"):
@@ -93,7 +93,7 @@ def analyze_form(form_raw: dict) -> dict:
     method = (form_raw.get("method") or "GET").upper()
     if method == "GET" and field_count > 2:
         # Check if any field looks like sensitive data
-        sensitive_names = [f.get("name", "").lower() for f in fields]
+        sensitive_names = [(f.get("name") or "").lower() for f in fields]
         if any(kw in n for kw in ["password", "passwd", "secret", "token", "card"] for n in sensitive_names):
             issues.append({
                 "type": "sensitive_get_form",

@@ -1,0 +1,135 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# GUARDIANAI — PRODUCTION DELIVERY CHECKLIST
+# Generated after full architecture audit + fix implementation
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── 1. NEW DEPENDENCIES TO ADD TO requirements.txt ───────────────────────────
+
+flask-wtf>=1.2.0        # CSRF protection
+flask-limiter>=3.5.0    # Rate limiting  (requires limits[redis] for Redis storage)
+limits[redis]>=3.6.0    # Flask-Limiter Redis backend
+
+
+# ── 2. DATABASE MIGRATION (run ONCE on existing databases) ───────────────────
+#
+# If this is a fresh deployment: db.create_all() handles everything.
+#
+# If you have EXISTING data in test_runs.scan_filters (TEXT column):
+#
+#   psql -U $DB_USER -d $DB_NAME -c "
+#     ALTER TABLE test_runs
+#       ALTER COLUMN scan_filters TYPE JSONB
+#       USING CASE
+#         WHEN scan_filters IS NULL OR scan_filters = '' THEN NULL
+#         ELSE scan_filters::JSONB
+#       END;
+#   "
+#
+# If scan_filters was always empty/null (typical if feature is new):
+#
+#   psql -U $DB_USER -d $DB_NAME -c "
+#     ALTER TABLE test_runs DROP COLUMN scan_filters;
+#     ALTER TABLE test_runs ADD COLUMN scan_filters JSONB;
+#   "
+#
+# Create indexes (if not using db.create_all on a fresh DB):
+#
+#   CREATE INDEX IF NOT EXISTS ix_testrun_user_id    ON test_runs(user_id);
+#   CREATE INDEX IF NOT EXISTS ix_testrun_started_at ON test_runs(started_at);
+#   CREATE INDEX IF NOT EXISTS ix_testrun_status     ON test_runs(status);
+#   CREATE INDEX IF NOT EXISTS ix_pageresult_run_id  ON page_results(run_id);
+#   CREATE INDEX IF NOT EXISTS ix_pageresult_failure_pattern ON page_results(failure_pattern_id);
+#   CREATE INDEX IF NOT EXISTS ix_pageresult_run_risk ON page_results(run_id, risk_category);
+
+
+# ── 3. REQUIRED ENVIRONMENT VARIABLES ────────────────────────────────────────
+#
+# Generate a strong key:
+#   export SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')
+#
+# Minimum required env vars:
+#   SECRET_KEY      — REQUIRED. App will not start without this.
+#   DB_USER         — PostgreSQL username
+#   DB_PASS         — PostgreSQL password
+#   DB_HOST         — PostgreSQL host
+#   DB_NAME         — PostgreSQL database name
+#   REDIS_HOST      — Redis hostname
+#   COHERE_API_KEY  — Cohere API key (optional; falls back to basic summary)
+#   JOB_TIMEOUT     — Max seconds per scan job (default: 3600)
+#   AI_SUMMARY_TIMEOUT — Max seconds for Cohere call (default: 30)
+
+
+# ── 4. START COMMANDS ────────────────────────────────────────────────────────
+#
+# Development:
+#   flask run
+#   python job_worker.py
+#
+# Production (gunicorn + worker):
+#   gunicorn -w 2 -b 0.0.0.0:5000 "app:app"
+#   python job_worker.py
+#
+# Docker Compose services needed:
+#   - app (Flask/Gunicorn)
+#   - worker (job_worker.py)
+#   - db (PostgreSQL 15+)
+#   - redis (Redis 7+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PRODUCTION READINESS CHECKLIST
+# ══════════════════════════════════════════════════════════════════════════════
+
+BLOCKING — Must be done before client delivery:
+  [x] SECRET_KEY hard-fails on startup if not set
+  [x] CSRF protection on all POST forms (Flask-WTF)
+  [x] Rate limiting on /login (20/min) and / POST (30/min)
+  [x] 2FA QR stored in Redis (TTL=300s), removed from session cookie
+  [x] run_pages_paginated uses DB LIMIT/OFFSET — no full JSON load
+  [x] Module-level crawler globals eliminated — job-isolated crawl state
+  [x] SimpleWorker replaced with rq.Worker (forked execution)
+  [x] Job timeout set on all enqueue() calls (configurable via JOB_TIMEOUT)
+  [x] DB_URL unified in config.py — app.py imports, no duplication
+  [x] DB indexes added: testrun.user_id, testrun.started_at, pageresult.run_id
+  [x] scan_filters column changed to JSONB
+  [x] history_days plan limit enforced in ALL history queries
+  [x] generate_metrics_from_run() replaces Excel-based aggregation
+  [x] Deprecated Session.query.get() replaced with db.session.get()
+  [x] Redis connection pool + startup ping + retry logic
+  [x] AI summary generation wrapped with hard timeout + fallback
+  [x] Screenshot route protected by login_required
+  [ ] Apply CSRF token to all form templates (see CSRF_TEMPLATE_PATCHES.html)
+  [ ] Run database migration SQL (scan_filters JSONB + indexes)
+  [ ] Install new dependencies: flask-wtf, flask-limiter, limits[redis]
+  [ ] Set SECRET_KEY environment variable on all server instances
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REMAINING NON-BLOCKING IMPROVEMENTS (Post-delivery sprints)
+# ══════════════════════════════════════════════════════════════════════════════
+
+Sprint 1 — Reliability & Observability:
+  - Add Flask-Migrate / Alembic for schema version control
+  - Add structured request logging (request ID, user ID, duration)
+  - Add /health endpoint for load balancer checks
+  - Serve screenshots via nginx or object storage (S3/R2), not Flask
+
+Sprint 2 — Enterprise Features:
+  - Scheduled/recurring scans (RQ Scheduler or APScheduler)
+  - Email/webhook notifications on scan completion or health score drops
+  - Scan comparison / diff view between two runs
+  - PDF export (WeasyPrint or Playwright PDF mode)
+  - API key authentication for programmatic scan triggering
+
+Sprint 3 — Multi-tenancy & RBAC:
+  - Organization/team model (org has many users, runs scoped to org)
+  - Role-based access: admin / operator / viewer
+  - Per-org plan limits (not per-user)
+  - Audit log: who ran what scan, from what IP, when
+
+Sprint 4 — Scale & SSO:
+  - Move file storage to S3-compatible object storage
+  - SSO / SAML / OAuth (for enterprise procurement)
+  - CDN for static assets and screenshots
+  - Horizontal worker scaling (multiple job_worker.py processes)

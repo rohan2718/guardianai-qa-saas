@@ -55,7 +55,7 @@
   }
   .logo-text h1 {
     font-size: 15px;
-    font-weight: 800;
+    font-weight: 700;
     color: #0f172a;
     margin: 0;
     line-height: 1.2;
@@ -845,7 +845,12 @@
 
     /* ── Fire-and-forget server delete ─────────────── */
     function _sendDelete(id) {
-      fetch("/history/" + id + "/delete", { method: "POST" }).catch(() => {}); // graceful — route may not exist yet
+      const csrfToken =
+        document.querySelector('meta[name="csrf-token"]')?.content || "";
+      fetch("/history/" + id + "/delete", {
+        method: "POST",
+        headers: { "X-CSRFToken": csrfToken },
+      }).catch(() => {});
     }
   })();
 </script>

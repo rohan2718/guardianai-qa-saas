@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
     <title>Guardian AI | Deep Forensic QA</title>
     <link
       rel="stylesheet"
@@ -334,32 +335,61 @@
       }
       .filter-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-        gap: 7px;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin: 0 0 4px;
+        text-align: left;
       }
+      /* Enhanced filter card with description line */
       .filter-chip {
         display: flex;
-        align-items: center;
-        gap: 9px;
-        padding: 9px 11px;
+        flex-direction: column;
+        gap: 4px;
+        padding: 10px 12px;
         border: 1.5px solid var(--border);
         border-radius: var(--radius-sm);
         cursor: pointer;
         background: #fafafa;
         font-size: 12px;
-
         transition:
           border-color 0.15s,
           background 0.15s,
-          color 0.15s;
+          transform 0.12s;
         color: var(--text-muted);
+        user-select: none;
+      }
+      .filter-chip:hover {
+        border-color: var(--primary);
+        background: rgba(99, 102, 241, 0.03);
+        transform: translateY(-1px);
       }
       .filter-chip input {
         display: none;
       }
       .filter-chip:has(input:checked) {
         border-color: var(--primary);
-        background: rgba(99, 102, 241, 0.05);
+        background: rgba(99, 102, 241, 0.07);
+        color: var(--primary);
+      }
+      .filter-chip-header {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        font-weight: 600;
+        color: inherit;
+      }
+      .filter-chip-header i {
+        color: var(--primary);
+        font-size: 13px;
+      }
+      .filter-chip-desc {
+        font-size: 10px;
+        color: #94a3b8;
+        line-height: 1.4;
+        padding-left: 20px;
+      }
+      .filter-chip:has(input:checked) .filter-chip-header {
         color: var(--primary);
       }
       .weight-notice {
@@ -371,6 +401,80 @@
         font-size: 11px;
         color: #92400e;
         display: none;
+      }
+      /* ── Not Tested badge (filter-aware results) ─────── */
+      .not-tested-badge {
+        font-size: 10px;
+        font-weight: 600;
+        color: #94a3b8;
+        background: #f1f5f9;
+        padding: 2px 7px;
+        border-radius: 20px;
+        letter-spacing: 0.3px;
+      }
+      /* ── Active filter pills (shown above results) ────── */
+      .active-filter-pills {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 14px;
+      }
+      .pills-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .filter-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--primary);
+        background: rgba(99, 102, 241, 0.1);
+        border: 1px solid rgba(99, 102, 241, 0.2);
+        padding: 3px 10px;
+        border-radius: 20px;
+      }
+      .filter-pill i {
+        font-size: 10px;
+      }
+      /* ── Confidence score tooltip ────────────────────── */
+      .conf-tooltip-wrap {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+      }
+      .conf-help-icon {
+        font-size: 11px;
+        color: #94a3b8;
+        margin-left: 4px;
+        cursor: help;
+      }
+      .conf-tooltip-text {
+        display: none;
+        position: absolute;
+        bottom: 130%;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1e293b;
+        color: #e2e8f0;
+        font-size: 11px;
+        line-height: 1.5;
+        padding: 8px 12px;
+        border-radius: 8px;
+        white-space: normal;
+        width: 220px;
+        z-index: 200;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+        font-weight: 400;
+        pointer-events: none;
+      }
+      .conf-tooltip-wrap:hover .conf-tooltip-text {
+        display: block;
       }
 
       .start-btn {
@@ -426,7 +530,7 @@
       }
       .progress-percent {
         font-size: 14px;
-        font-weight: 800;
+        font-weight: 700;
         color: var(--primary);
         font-family: var(--font-code);
       }
@@ -469,7 +573,7 @@
       }
       .rh-title {
         font-size: 17px;
-        font-weight: 800;
+        font-weight: 700;
         color: var(--text-main);
         margin-bottom: 8px;
         font-family: var(--font-code);
@@ -512,7 +616,7 @@
       }
       .rh-score-val {
         font-size: 34px;
-        font-weight: 800;
+        font-weight: 700;
         line-height: 1;
         font-family: var(--font-code);
       }
@@ -572,7 +676,7 @@
       }
       .metric-val {
         font-size: 26px;
-        font-weight: 800;
+        font-weight: 700;
         color: var(--text-main);
         line-height: 1;
       }
@@ -594,7 +698,7 @@
       }
       .comp-val {
         font-size: 22px;
-        font-weight: 800;
+        font-weight: 700;
         color: var(--text-main);
         font-family: var(--font-code);
         line-height: 1;
@@ -849,7 +953,7 @@
         gap: 4px;
       }
       .d-val {
-        font-weight: 800;
+        font-weight: 700;
         font-family: var(--font-code);
         font-size: 17px;
         color: var(--text-main);
@@ -1246,7 +1350,6 @@
       .pr-url-link {
         font-family: var(--font-code);
         font-size: 12px;
-        font-weight: 600;
         color: #1e293b;
         white-space: nowrap;
         overflow: hidden;
@@ -1335,7 +1438,7 @@
       }
       .delete-modal-box h3 {
         font-size: 18px;
-        font-weight: 800;
+        font-weight: 700;
         color: var(--text-main);
         margin-bottom: 8px;
       }
@@ -1509,28 +1612,149 @@
         border-radius: var(--radius-lg);
         padding: 24px 28px 20px;
         margin-bottom: 20px;
-        box-shadow: 0 2px 16px rgba(99,102,241,0.07);
+        box-shadow: 0 2px 16px rgba(99, 102, 241, 0.07);
       }
-      .lsp-header { display:flex; align-items:center; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
-      .lsp-radar { width:40px; height:40px; border-radius:50%; background:linear-gradient(135deg,var(--primary),var(--accent)); display:flex; align-items:center; justify-content:center; color:#fff; font-size:17px; flex-shrink:0; }
-      .lsp-title { font-size:15px; font-weight:700; color:var(--text-main); }
-      .lsp-url { font-size:12px; color:var(--text-muted); font-family:var(--font-code); margin-top:2px; word-break:break-all; }
-      .lsp-badge { margin-left:auto; display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; padding:5px 12px; border-radius:20px; }
-      .lsp-badge.running { background:#eff6ff; color:#3b82f6; border:1px solid #bfdbfe; }
-      .lsp-badge.queued  { background:#fffbeb; color:#d97706; border:1px solid #fde68a; }
-      .lsp-badge.failed  { background:#fef2f2; color:#ef4444; border:1px solid #fecaca; }
-      .lsp-progress-labels { display:flex; justify-content:space-between; align-items:center; margin-bottom:7px; font-size:12px; color:var(--text-muted); }
-      .lsp-pct { font-size:14px; font-weight:800; color:var(--primary); font-family:var(--font-code); }
-      .lsp-track { height:8px; background:#e2e8f0; border-radius:6px; overflow:hidden; margin-bottom:16px; }
-      .lsp-fill  { height:100%; background:linear-gradient(90deg,var(--primary),var(--accent)); border-radius:6px; transition:width 0.4s ease; min-width:4px; }
-      .lsp-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
-      @media(max-width:600px){.lsp-stats{grid-template-columns:repeat(2,1fr);}}
-      .lsp-stat { background:#f8fafc; border:1px solid var(--border); border-radius:var(--radius-sm); padding:10px 12px; text-align:center; }
-      .lsp-stat-val { font-size:20px; font-weight:800; font-family:var(--font-code); color:var(--text-main); line-height:1; }
-      .lsp-stat-lbl { font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-muted); margin-top:4px; }
-      .lsp-hint { font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:6px; padding-top:10px; border-top:1px solid var(--border); }
-      .placeholder-section { background:var(--card-bg); border:1px dashed var(--border); border-radius:var(--radius-md); padding:32px; text-align:center; color:var(--text-muted); margin-bottom:16px; font-size:13px; }
-      .placeholder-section i { font-size:24px; margin-bottom:10px; display:block; opacity:0.4; }
+      .lsp-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 18px;
+        flex-wrap: wrap;
+      }
+      .lsp-radar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 17px;
+        flex-shrink: 0;
+      }
+      .lsp-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text-main);
+      }
+      .lsp-url {
+        font-size: 12px;
+        color: var(--text-muted);
+        font-family: var(--font-code);
+        margin-top: 2px;
+        word-break: break-all;
+      }
+      .lsp-badge {
+        margin-left: auto;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 5px 12px;
+        border-radius: 20px;
+      }
+      .lsp-badge.running {
+        background: #eff6ff;
+        color: #3b82f6;
+        border: 1px solid #bfdbfe;
+      }
+      .lsp-badge.queued {
+        background: #fffbeb;
+        color: #d97706;
+        border: 1px solid #fde68a;
+      }
+      .lsp-badge.failed {
+        background: #fef2f2;
+        color: #ef4444;
+        border: 1px solid #fecaca;
+      }
+      .lsp-progress-labels {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 7px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+      .lsp-pct {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--primary);
+        font-family: var(--font-code);
+      }
+      .lsp-track {
+        height: 8px;
+        background: #e2e8f0;
+        border-radius: 6px;
+        overflow: hidden;
+        margin-bottom: 16px;
+      }
+      .lsp-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary), var(--accent));
+        border-radius: 6px;
+        transition: width 0.4s ease;
+        min-width: 4px;
+      }
+      .lsp-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+        margin-bottom: 14px;
+      }
+      @media (max-width: 600px) {
+        .lsp-stats {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      .lsp-stat {
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        text-align: center;
+      }
+      .lsp-stat-val {
+        font-size: 20px;
+        font-weight: 700;
+        font-family: var(--font-code);
+        color: var(--text-main);
+        line-height: 1;
+      }
+      .lsp-stat-lbl {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-muted);
+        margin-top: 4px;
+      }
+      .lsp-hint {
+        font-size: 12px;
+        color: var(--text-muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-top: 10px;
+        border-top: 1px solid var(--border);
+      }
+      .placeholder-section {
+        background: var(--card-bg);
+        border: 1px dashed var(--border);
+        border-radius: var(--radius-md);
+        padding: 32px;
+        text-align: center;
+        color: var(--text-muted);
+        margin-bottom: 16px;
+        font-size: 13px;
+      }
+      .placeholder-section i {
+        font-size: 24px;
+        margin-bottom: 10px;
+        display: block;
+        opacity: 0.4;
+      }
     </style>
   </head>
   <body>
@@ -1592,6 +1816,11 @@
               </p>
 
               <form id="auditForm" method="POST" action="/">
+                <input
+                  type="hidden"
+                  name="csrf_token"
+                  value="{{ csrf_token() }}"
+                />
                 <div class="input-group">
                   <span class="input-icon"
                     ><i class="fa-solid fa-globe"></i
@@ -1640,22 +1869,32 @@
                   </div>
                   <div class="filter-body open" id="filterBody">
                     <div class="filter-grid" id="filterGrid">
-                      {% for val, lbl, icon in [('ui_elements','UI
-                      Analysis','fa-puzzle-piece'),
-                      ('form_validation','Forms','fa-wpforms'),
-                      ('functional','Functional','fa-link'),
-                      ('accessibility','Accessibility','fa-universal-access'),
-                      ('performance','Performance','fa-gauge-high'),
-                      ('security','Security','fa-shield-halved')] %}
+                      {% for fdef in scan_filter_defs %}
                       <label class="filter-chip">
                         <input
                           type="checkbox"
                           name="scan_filters"
-                          value="{{ val }}"
-                          checked
+                          value="{{ fdef.key }}"
+                          {%
+                          if
+                          not
+                          active_filters
+                          or
+                          fdef.key
+                          in
+                          active_filters
+                          %}checked{%
+                          endif
+                          %}
                           onchange="updateFilterCount()"
                         />
-                        <i class="fa-solid {{ icon }}"></i> {{ lbl }}
+                        <div class="filter-chip-header">
+                          <i
+                            class="{{ filter_icons.get(fdef.key, 'fa-solid fa-circle-check') }}"
+                          ></i>
+                          {{ fdef.label }}
+                        </div>
+                        <div class="filter-chip-desc">{{ fdef.desc }}</div>
                       </label>
                       {% endfor %}
                     </div>
@@ -1669,9 +1908,9 @@
                 <button type="submit" id="submitBtn" class="start-btn">
                   <span id="btnText">Start Analysis</span>
                   <i class="fa-solid fa-arrow-right" id="btnIcon"></i>
-                  <span id="btnSpinner" style="display: none"
-                    ><i class="fa-solid fa-circle-notch fa-spin"></i
-                  ></span>
+                  <span id="btnSpinner" style="display: none">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i>
+                  </span>
                 </button>
 
                 <div
@@ -1728,37 +1967,70 @@
             id="view-dashboard"
             class="view-section {% if not data and not current_run %}hidden{% endif %}"
           >
-            {% if current_run %}
-
-            {%- if current_run.status in ('running', 'queued') %}
+            {% if current_run %} {%- if current_run.status in ('running',
+            'queued') %}
             <div class="live-scan-panel fade-in-up" id="liveScanPanel">
               <div class="lsp-header">
-                <div class="lsp-radar"><i class="fa-solid fa-radar fa-spin"></i></div>
+                <div class="lsp-radar">
+                  <i class="fa-solid fa-radar fa-spin"></i>
+                </div>
                 <div>
                   <div class="lsp-title">Live Crawl in Progress</div>
                   <div class="lsp-url">{{ current_run.target_url }}</div>
                 </div>
-                <span class="lsp-badge {{ current_run.status }}" id="lspStatusBadge">
+                <span
+                  class="lsp-badge {{ current_run.status }}"
+                  id="lspStatusBadge"
+                >
                   <i class="fa-solid fa-circle-notch fa-spin"></i>
-                  <span id="lspStatusText">{{ current_run.status | upper }}</span>
+                  <span id="lspStatusText"
+                    >{{ current_run.status | upper }}</span
+                  >
                 </span>
               </div>
               <div>
                 <div class="lsp-progress-labels">
                   <span>Crawling pages&hellip;</span>
-                  <span class="lsp-pct" id="lspPercent">{{ current_run.progress or 0 }}%</span>
+                  <span class="lsp-pct" id="lspPercent"
+                    >{{ current_run.progress or 0 }}%</span
+                  >
                 </div>
                 <div class="lsp-track">
-                  <div class="lsp-fill" id="lspBar" style="width:{{ current_run.progress or 0 }}%"></div>
+                  <div
+                    class="lsp-fill"
+                    id="lspBar"
+                    style="width:{{ current_run.progress or 0 }}%"
+                  ></div>
                 </div>
               </div>
               <div class="lsp-stats">
-                <div class="lsp-stat"><div class="lsp-stat-val" id="lspScanned">{{ current_run.scanned_pages or 0 }}</div><div class="lsp-stat-lbl">Scanned</div></div>
-                <div class="lsp-stat"><div class="lsp-stat-val" id="lspDiscovered">{{ current_run.discovered_pages or '&mdash;' }}</div><div class="lsp-stat-lbl">Discovered</div></div>
-                <div class="lsp-stat"><div class="lsp-stat-val" id="lspRemaining">&mdash;</div><div class="lsp-stat-lbl">Remaining</div></div>
-                <div class="lsp-stat"><div class="lsp-stat-val" id="lspETA" style="font-size:14px">Calculating&hellip;</div><div class="lsp-stat-lbl">ETA</div></div>
+                <div class="lsp-stat">
+                  <div class="lsp-stat-val" id="lspScanned">
+                    {{ current_run.scanned_pages or 0 }}
+                  </div>
+                  <div class="lsp-stat-lbl">Scanned</div>
+                </div>
+                <div class="lsp-stat">
+                  <div class="lsp-stat-val" id="lspDiscovered">
+                    {{ current_run.discovered_pages or '&mdash;' }}
+                  </div>
+                  <div class="lsp-stat-lbl">Discovered</div>
+                </div>
+                <div class="lsp-stat">
+                  <div class="lsp-stat-val" id="lspRemaining">&mdash;</div>
+                  <div class="lsp-stat-lbl">Remaining</div>
+                </div>
+                <div class="lsp-stat">
+                  <div class="lsp-stat-val" id="lspETA" style="font-size: 14px">
+                    Calculating&hellip;
+                  </div>
+                  <div class="lsp-stat-lbl">ETA</div>
+                </div>
               </div>
-              <p class="lsp-hint"><i class="fa-solid fa-circle-info"></i> Results will load automatically when the scan completes &mdash; no refresh needed.</p>
+              <p class="lsp-hint">
+                <i class="fa-solid fa-circle-info"></i> Results will load
+                automatically when the scan completes &mdash; no refresh needed.
+              </p>
             </div>
             {%- endif %}
 
@@ -1791,7 +2063,18 @@
 
               {% set conf = current_run.confidence_score %}
               <div class="rh-score-box">
-                <div class="rh-score-lbl">Data Confidence</div>
+                <div class="rh-score-lbl">
+                  Data Confidence
+                  <span class="conf-tooltip-wrap">
+                    <i class="fa-solid fa-circle-info conf-help-icon"></i>
+                    <span class="conf-tooltip-text">
+                      Confidence reflects how many checks returned real data vs.
+                      null.<br />
+                      Lower = more scan errors or skipped checks.<br />
+                      Higher = all selected engines ran successfully.
+                    </span>
+                  </span>
+                </div>
                 {% if conf is not none %}
                 <div
                   class="conf-badge-large {% if conf >= 80 %}conf-high{% elif conf >= 50 %}conf-mid{% else %}conf-low{% endif %}"
@@ -1830,38 +2113,47 @@
               </div>
 
               {% if current_run.status == 'completed' or current_run.status ==
-              'failed' %}
-             
-              {% endif %}
+              'failed' %} {% endif %}
             </div>
 
             <!-- Key Metrics / Placeholder while scanning -->
-            {% if current_run.status in ('running', 'queued') and not raw_data %}
+            {% if current_run.status in ('running', 'queued') and not raw_data
+            %}
             <div class="placeholder-section fade-in-up delay-2">
               <i class="fa-solid fa-hourglass-half"></i>
-              Scan metrics and per-page results will appear here once pages have been analyzed.
+              Scan metrics and per-page results will appear here once pages have
+              been analyzed.
             </div>
             {% else %}
             <div class="metrics-grid fade-in-up delay-2">
               <div class="metric-card">
                 <div class="metric-lbl">Total Analyzed</div>
-                <div class="metric-val">{% if metrics and metrics.get('total_pages') is not none %}{{ metrics.get('total_pages') }}{% else %}—{% endif %}</div>
+                <div class="metric-val">
+                  {% if metrics and metrics.get('total_pages') is not none %}{{
+                  metrics.get('total_pages') }}{% else %}—{% endif %}
+                </div>
               </div>
               <div class="metric-card">
                 <div class="metric-lbl">Passed</div>
                 <div class="metric-val" style="color: var(--success)">
-                  {% if metrics and metrics.get('active_pages') is not none %}{{ metrics.get('active_pages') }}{% else %}—{% endif %}
+                  {% if metrics and metrics.get('active_pages') is not none %}{{
+                  metrics.get('active_pages') }}{% else %}—{% endif %}
                 </div>
               </div>
               <div class="metric-card">
                 <div class="metric-lbl">Broken Links</div>
                 <div class="metric-val" style="color: var(--danger)">
-                  {% if metrics and metrics.get('not_found_pages') is not none %}{{ metrics.get('not_found_pages') }}{% else %}—{% endif %}
+                  {% if metrics and metrics.get('not_found_pages') is not none
+                  %}{{ metrics.get('not_found_pages') }}{% else %}—{% endif %}
                 </div>
               </div>
               <div class="metric-card">
                 <div class="metric-lbl">Avg Load Time</div>
-                <div class="metric-val">{% if metrics and metrics.get('avg_load_time') is not none %}{{ metrics.get('avg_load_time') }}s{% else %}—{% endif %}</div>
+                <div class="metric-val">
+                  {% if metrics and metrics.get('avg_load_time') is not none
+                  %}{{ "%.2f"|format(metrics.get('avg_load_time')) }}s{% else
+                  %}—{% endif %}
+                </div>
               </div>
             </div>
 
@@ -1871,8 +2163,8 @@
               current_run.avg_performance_score, '#6366f1'), ('Accessibility',
               current_run.avg_accessibility_score, '#10b981'), ('Security',
               current_run.avg_security_score, '#f59e0b'), ('Functional',
-              current_run.avg_functional_score, '#ec4899'), ('UI / Form', None,
-              '#3b82f6')] %}
+              current_run.avg_functional_score, '#ec4899'), ('UI / Form',
+              current_run.avg_ui_form_score, '#3b82f6')] %}
               <div class="comp-card" style="border-top: 3px solid {{ c }};">
                 <div class="comp-val">
                   {{ v|round(1) if v is not none else '—' }}
@@ -1897,6 +2189,17 @@
 
             <!-- Per-Page Results -->
             <div class="fade-in-up delay-3">
+              {% if active_filters %}
+              <div class="active-filter-pills">
+                <span class="pills-label">Scanned with:</span>
+                {% for f in active_filters %}
+                <span class="filter-pill">
+                  <i class="{{ filter_icons.get(f, 'fa-solid fa-check') }}"></i>
+                  {{ f | replace('_', ' ') | title }}
+                </span>
+                {% endfor %}
+              </div>
+              {% endif %}
               <div class="pages-header">
                 <div class="pages-title">
                   <i class="fa-solid fa-list-check"></i> Per-Page Results
@@ -2001,8 +2304,12 @@
                               <i class="fa-solid fa-gauge-high"></i> Perf
                             </div>
                             <div class="d-val">
-                              {{ p.get('performance_score')|round(1) if
-                              p.get('performance_score') else '—' }}
+                              {% if p.get('performance_score') is not none %} {{
+                              p.get('performance_score')|round(1) }} {% elif not
+                              active_filters or 'performance' in active_filters
+                              %} — {% else %}
+                              <span class="not-tested-badge">Not Tested</span>
+                              {% endif %}
                             </div>
                           </div>
                           <div class="d-card">
@@ -2010,8 +2317,12 @@
                               <i class="fa-solid fa-universal-access"></i> A11y
                             </div>
                             <div class="d-val">
-                              {{ p.get('accessibility_score')|round(1) if
-                              p.get('accessibility_score') else '—' }}
+                              {% if p.get('accessibility_score') is not none %}
+                              {{ p.get('accessibility_score')|round(1) }} {%
+                              elif not active_filters or 'accessibility' in
+                              active_filters %} — {% else %}
+                              <span class="not-tested-badge">Not Tested</span>
+                              {% endif %}
                             </div>
                           </div>
                           <div class="d-card">
@@ -2019,8 +2330,12 @@
                               <i class="fa-solid fa-shield-halved"></i> Sec
                             </div>
                             <div class="d-val">
-                              {{ p.get('security_score')|round(1) if
-                              p.get('security_score') else '—' }}
+                              {% if p.get('security_score') is not none %} {{
+                              p.get('security_score')|round(1) }} {% elif not
+                              active_filters or 'security' in active_filters %}
+                              — {% else %}
+                              <span class="not-tested-badge">Not Tested</span>
+                              {% endif %}
                             </div>
                           </div>
                           <div class="d-card">
@@ -2028,8 +2343,12 @@
                               <i class="fa-solid fa-link"></i> Func
                             </div>
                             <div class="d-val">
-                              {{ p.get('functional_score')|round(1) if
-                              p.get('functional_score') else '—' }}
+                              {% if p.get('functional_score') is not none %} {{
+                              p.get('functional_score')|round(1) }} {% elif not
+                              active_filters or 'functional' in active_filters
+                              %} — {% else %}
+                              <span class="not-tested-badge">Not Tested</span>
+                              {% endif %}
                             </div>
                           </div>
                         </div>
@@ -2056,7 +2375,8 @@
                           <span
                             class="issue-tag"
                             style="background: #f1f5f9; color: #475569"
-                            >Load: {{ p.get('load_time') }}s</span
+                            >Load: {{ "%.2f"|format(p.get('load_time'))
+                            }}s</span
                           >
                         </div>
 
@@ -2109,8 +2429,7 @@
                 <div class="pagination-btns" id="pgBtns"></div>
               </div>
             </div>
-            {% endif %}{# data ready #}
-            {% endif %}{# current_run #}
+            {% endif %}{# data ready #} {% endif %}{# current_run #}
           </div>
         </div>
       </div>
@@ -2443,7 +2762,7 @@
                     style="width: 100%; height: 100%"
                   ></div>
                   <textarea id="graph-data-{{ loop.index0 }}" class="hidden">
-{{ item.connected_pages | tojson }}</textarea
+{{ (item.connected_pages or []) | tojson }}</textarea
                   >
                   <input
                     type="hidden"
@@ -2541,25 +2860,44 @@
             }
 
             // ── Also update live-scan panel if present ────
-            const lspBar = document.getElementById('lspBar');
-            if (lspBar) lspBar.style.width = pct + '%';
-            const lspPct = document.getElementById('lspPercent');
-            if (lspPct) lspPct.textContent = pct + '%';
-            const lspScanned = document.getElementById('lspScanned');
-            if (lspScanned) lspScanned.textContent = d.scanned_pages || d.scanned || 0;
-            const lspDisc = document.getElementById('lspDiscovered');
-            if (lspDisc) lspDisc.textContent = (d.discovered_pages || d.discovered) ? (d.discovered_pages || d.discovered) : '—';
+            const lspBar = document.getElementById("lspBar");
+            if (lspBar) lspBar.style.width = pct + "%";
+            const lspPct = document.getElementById("lspPercent");
+            if (lspPct) lspPct.textContent = pct + "%";
+            const lspScanned = document.getElementById("lspScanned");
+            if (lspScanned)
+              lspScanned.textContent = d.scanned_pages || d.scanned || 0;
+            const lspDisc = document.getElementById("lspDiscovered");
+            if (lspDisc)
+              lspDisc.textContent =
+                d.discovered_pages || d.discovered
+                  ? d.discovered_pages || d.discovered
+                  : "—";
             const disc2 = d.discovered_pages || d.discovered || 0;
-            const sc2   = d.scanned_pages || d.scanned || 0;
-            const rem2  = disc2 > 0 ? Math.max(0, disc2 - sc2) : null;
-            const lspRem = document.getElementById('lspRemaining');
-            if (lspRem) lspRem.textContent = rem2 !== null ? rem2 : '—';
-            const lspETA = document.getElementById('lspETA');
-            if (lspETA) lspETA.textContent = (d.eta_seconds == null) ? 'Calculating…' : (d.eta_seconds <= 0 ? 'Almost done' : (Math.floor(d.eta_seconds/60) > 0 ? Math.floor(d.eta_seconds/60)+'m '+Math.round(d.eta_seconds%60)+'s' : Math.round(d.eta_seconds)+'s'));
-            const lspStatus = document.getElementById('lspStatusText');
-            if (lspStatus) lspStatus.textContent = (d.status || '').toUpperCase();
-            const lspBadge = document.getElementById('lspStatusBadge');
-            if (lspBadge) { lspBadge.className = 'lsp-badge ' + (d.status || 'running'); }
+            const sc2 = d.scanned_pages || d.scanned || 0;
+            const rem2 = disc2 > 0 ? Math.max(0, disc2 - sc2) : null;
+            const lspRem = document.getElementById("lspRemaining");
+            if (lspRem) lspRem.textContent = rem2 !== null ? rem2 : "—";
+            const lspETA = document.getElementById("lspETA");
+            if (lspETA)
+              lspETA.textContent =
+                d.eta_seconds == null
+                  ? "Calculating…"
+                  : d.eta_seconds <= 0
+                    ? "Almost done"
+                    : Math.floor(d.eta_seconds / 60) > 0
+                      ? Math.floor(d.eta_seconds / 60) +
+                        "m " +
+                        Math.round(d.eta_seconds % 60) +
+                        "s"
+                      : Math.round(d.eta_seconds) + "s";
+            const lspStatus = document.getElementById("lspStatusText");
+            if (lspStatus)
+              lspStatus.textContent = (d.status || "").toUpperCase();
+            const lspBadge = document.getElementById("lspStatusBadge");
+            if (lspBadge) {
+              lspBadge.className = "lsp-badge " + (d.status || "running");
+            }
 
             if (d.status === "completed" || d.status === "failed") {
               clearInterval(interval);
@@ -2641,7 +2979,11 @@
           `#tab-btn-${tabName}-${index}`,
         );
         if (targetBtn) targetBtn.classList.add("active");
-        if (tabName === "graph") setTimeout(() => initGraph(index), 100);
+        if (tabName === "graph")
+          setTimeout(() => {
+            initGraph(index);
+            if (window._cy) window._cy.resize();
+          }, 100);
       }
 
       // ── Cytoscape Graph ────────────────────────────
@@ -2775,6 +3117,7 @@
           container.style.cursor = "default";
         });
         cy.resize();
+        window._cy = cy;
         container.setAttribute("data-initialized", "true");
       }
 
@@ -2843,9 +3186,13 @@
         btn.innerHTML =
           '<i class="fa-solid fa-circle-notch fa-spin"></i> Deleting...';
 
+        const csrfToken = document.querySelector(
+          'meta[name="csrf-token"]',
+        ).content;
         try {
           const res = await fetch(`/run/${_deleteTargetId}/delete`, {
             method: "POST",
+            headers: { "X-CSRFToken": csrfToken },
           });
           if (res.ok) {
             // Redirect to new scan or dashboard

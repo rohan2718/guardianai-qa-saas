@@ -1,0 +1,105 @@
+<!--
+  TEMPLATE CSRF PATCHES — GuardianAI
+  ====================================
+  Add the hidden input below to EVERY <form method="POST"> in your templates.
+  Flask-WTF will reject any POST without a valid token.
+
+  Files that need this change:
+    templates/login.html
+    templates/register.html
+    templates/index.html   (the audit form + any delete forms)
+
+  ── HOW TO APPLY ────────────────────────────────────────────────────────────
+  Find every:
+      <form method="POST">
+  or:
+      <form method="post" ...>
+
+  And add as the FIRST child element inside the form:
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  ─────────────────────────────────────────────────────────────────────────────
+-->
+
+
+<!-- ═══════════════════════════════════════════════════════
+     templates/login.html — BOTH form blocks (login + OTP)
+     ═══════════════════════════════════════════════════════ -->
+
+<!-- BEFORE (login form): -->
+<form method="POST">
+  {% if not show_otp %}
+  <div class="input-group">
+    ...
+
+<!-- AFTER: -->
+<form method="POST">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  {% if not show_otp %}
+  <div class="input-group">
+    ...
+
+
+<!-- ═══════════════════════════════════════════════════════
+     templates/register.html
+     ═══════════════════════════════════════════════════════ -->
+
+<!-- BEFORE: -->
+<form method="POST">
+  <div class="input-group">
+    <span class="input-icon"><i class="fa-solid fa-user"></i></span>
+    <input type="text" name="username" ...
+
+<!-- AFTER: -->
+<form method="POST">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="input-group">
+    <span class="input-icon"><i class="fa-solid fa-user"></i></span>
+    <input type="text" name="username" ...
+
+
+<!-- ═══════════════════════════════════════════════════════
+     templates/index.html — audit submission form
+     ═══════════════════════════════════════════════════════ -->
+
+<!-- BEFORE: -->
+<form id="auditForm" method="POST" action="/">
+  <div class="input-group">
+    <span class="input-icon"><i class="fa-solid fa-globe"></i></span>
+    <input type="url" name="url" ...
+
+<!-- AFTER: -->
+<form id="auditForm" method="POST" action="/">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <div class="input-group">
+    <span class="input-icon"><i class="fa-solid fa-globe"></i></span>
+    <input type="url" name="url" ...
+
+
+<!--
+  ── NOTE ON AJAX DELETE CALLS ────────────────────────────────────────────────
+  The /history/<id>/delete and /run/<id>/delete POST endpoints use fetch().
+  You must include the CSRF token in the request header for these calls.
+
+  Add this to your JavaScript wherever you call POST endpoints via fetch():
+
+    async function csrfFetch(url, options = {}) {
+      const token = document.querySelector('meta[name="csrf-token"]')?.content
+                  || '{{ csrf_token() }}';
+      return fetch(url, {
+        ...options,
+        headers: {
+          ...(options.headers || {}),
+          'X-CSRFToken': token,
+          'Content-Type': options.body ? 'application/json' : undefined,
+        }
+      });
+    }
+
+  Then replace:
+    fetch('/history/' + id + '/delete', { method: 'POST' })
+  with:
+    csrfFetch('/history/' + id + '/delete', { method: 'POST' })
+
+  And add this meta tag inside <head> in your base template (or index.html):
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+-->

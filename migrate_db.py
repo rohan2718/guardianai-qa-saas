@@ -69,15 +69,16 @@ try:
             similar_issue_ref       INTEGER,
             ai_confidence           FLOAT,
             self_healing_suggestion TEXT,
-            load_time_s             FLOAT,
+            load_time               FLOAT,
             fcp_ms                  FLOAT,
             lcp_ms                  FLOAT,
             ttfb_ms                 FLOAT,
             accessibility_issues    INTEGER,
-            broken_links            INTEGER,
-            js_errors               INTEGER,
+            broken_links_count      INTEGER,
+            js_errors_count         INTEGER,
             is_https                BOOLEAN,
-            screenshot_path         VARCHAR(500)
+            screenshot_path         VARCHAR(500),
+            ui_summary              JSONB
         );
     """)
     conn.commit()
@@ -85,6 +86,42 @@ try:
 except Exception as e:
     conn.rollback()
     print(f"  ✗ page_results failed: {e}")
+
+# ── Add missing columns to EXISTING page_results table ────────────────────────
+print("\nPatching page_results columns (if missing)...")
+page_result_patches = [
+    ("js_errors_count",         "INTEGER",   ""),
+    ("broken_links_count",      "INTEGER",   ""),
+    ("load_time",               "FLOAT",     ""),
+    ("ui_summary",              "JSONB",     ""),
+    ("self_healing_suggestion", "TEXT",      ""),
+    ("similar_issue_ref",       "INTEGER",   ""),
+    ("ai_confidence",           "FLOAT",     ""),
+    ("failure_pattern_id",      "VARCHAR(64)", ""),
+    ("root_cause_tag",          "VARCHAR(200)", ""),
+    ("checks_executed",         "INTEGER",   ""),
+    ("checks_null",             "INTEGER",   ""),
+    ("confidence_score",        "FLOAT",     ""),
+    ("ui_form_score",           "FLOAT",     ""),
+    ("functional_score",        "FLOAT",     ""),
+    ("security_score",          "FLOAT",     ""),
+    ("accessibility_score",     "FLOAT",     ""),
+    ("performance_score",       "FLOAT",     ""),
+    ("risk_category",           "VARCHAR(50)", ""),
+    ("health_score",            "FLOAT",     ""),
+]
+for col, dtype, default in page_result_patches:
+    try:
+        sql = f"ALTER TABLE page_results ADD COLUMN {col} {dtype} {default};"
+        cur.execute(sql)
+        conn.commit()
+        print(f"  ✓ Added: page_results.{col}")
+    except psycopg2.errors.DuplicateColumn:
+        conn.rollback()
+        print(f"  — Already exists: page_results.{col}")
+    except Exception as e:
+        conn.rollback()
+        print(f"  ✗ Failed page_results.{col}: {e}")
 
 cur.close()
 conn.close()

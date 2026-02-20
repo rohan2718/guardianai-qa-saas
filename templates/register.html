@@ -4,9 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Register | Guardian AI</title>
-    
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
 
     <style>
       /* --- IMPORTED DESIGN SYSTEM (Identical to Login) --- */
@@ -22,7 +28,12 @@
         --font-main: "Inter", sans-serif;
       }
 
-      * { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        outline: none;
+      }
 
       body {
         font-family: var(--font-main);
@@ -33,8 +44,16 @@
         align-items: center;
         justify-content: center;
         background-image:
-          radial-gradient(circle at 5% 10%, rgba(99, 102, 241, 0.08) 0%, transparent 25%),
-          radial-gradient(circle at 95% 90%, rgba(236, 72, 153, 0.08) 0%, transparent 25%);
+          radial-gradient(
+            circle at 5% 10%,
+            rgba(99, 102, 241, 0.08) 0%,
+            transparent 25%
+          ),
+          radial-gradient(
+            circle at 95% 90%,
+            rgba(236, 72, 153, 0.08) 0%,
+            transparent 25%
+          );
       }
 
       .auth-card {
@@ -53,7 +72,11 @@
       .logo-icon {
         width: 60px;
         height: 60px;
-        background: linear-gradient(135deg, var(--secondary), var(--accent)); /* Slightly different gradient for register */
+        background: linear-gradient(
+          135deg,
+          var(--secondary),
+          var(--accent)
+        ); /* Slightly different gradient for register */
         color: white;
         border-radius: 16px;
         display: flex;
@@ -64,8 +87,17 @@
         box-shadow: 0 0 15px rgba(236, 72, 153, 0.3);
       }
 
-      h2 { font-size: 24px; font-weight: 800; color: #1e293b; margin-bottom: 8px; }
-      p.subtitle { color: var(--text-muted); font-size: 14px; margin-bottom: 32px; }
+      h2 {
+        font-size: 24px;
+        font-weight: 800;
+        color: #1e293b;
+        margin-bottom: 8px;
+      }
+      p.subtitle {
+        color: var(--text-muted);
+        font-size: 14px;
+        margin-bottom: 32px;
+      }
 
       .input-group {
         background: #f8fafc;
@@ -82,8 +114,12 @@
         background: white;
         box-shadow: 0 0 0 4px rgba(236, 72, 153, 0.1);
       }
-      .input-icon { padding: 0 16px; color: var(--secondary); min-width: 40px; }
-      
+      .input-icon {
+        padding: 0 16px;
+        color: var(--secondary);
+        min-width: 40px;
+      }
+
       input {
         border: none;
         flex: 1;
@@ -108,7 +144,10 @@
         margin-top: 8px;
         box-shadow: 0 4px 12px rgba(236, 72, 153, 0.2);
       }
-      button:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(236, 72, 153, 0.4); }
+      button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(236, 72, 153, 0.4);
+      }
 
       .error-msg {
         background: #fef2f2;
@@ -131,44 +170,67 @@
         color: var(--text-muted);
         text-decoration: none;
       }
-      .footer-link:hover { color: var(--secondary); text-decoration: underline; }
+      .footer-link:hover {
+        color: var(--secondary);
+        text-decoration: underline;
+      }
 
       @keyframes fadeInUp {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
       }
     </style>
   </head>
   <body>
     <div class="auth-card">
       <div class="logo-icon"><i class="fa-solid fa-user-plus"></i></div>
-      
+
       <h2>Create Account</h2>
       <p class="subtitle">Join the Guardian AI forensic network</p>
 
       {% if error %}
-        <div class="error-msg">
-            <i class="fa-solid fa-circle-exclamation"></i> {{ error }}
-        </div>
+      <div class="error-msg">
+        <i class="fa-solid fa-circle-exclamation"></i> {{ error }}
+      </div>
       {% endif %}
 
       <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
         <div class="input-group">
           <span class="input-icon"><i class="fa-solid fa-user"></i></span>
-          <input type="text" name="username" placeholder="Choose Username" required />
+          <input
+            type="text"
+            name="username"
+            placeholder="Choose Username"
+            required
+          />
         </div>
-        
+
         <div class="input-group">
           <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
-          <input type="password" name="password" placeholder="Create Password" required />
+          <input
+            type="password"
+            name="password"
+            placeholder="Create Password"
+            required
+          />
         </div>
 
         <button type="submit">
-          Start Journey <i class="fa-solid fa-rocket" style="margin-left: 8px;"></i>
+          Start Journey
+          <i class="fa-solid fa-rocket" style="margin-left: 8px"></i>
         </button>
       </form>
 
-      <a href="/login" class="footer-link">Already have an account? <b>Log In</b></a>
+      <a href="/login" class="footer-link"
+        >Already have an account? <b>Log In</b></a
+      >
     </div>
   </body>
 </html>

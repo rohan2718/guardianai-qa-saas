@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
     <title>Guardian AI | Dashboard</title>
     <link
       rel="stylesheet"
@@ -229,7 +230,7 @@
       }
       .stat-val {
         font-size: 26px;
-        
+
         color: var(--text-main);
         font-family: var(--font-code);
         line-height: 1;
@@ -237,7 +238,7 @@
       }
       .stat-lbl {
         font-size: 12px;
-        
+
         color: var(--text-muted);
       }
       .stat-icon {
@@ -282,7 +283,7 @@
       }
       .donut-num {
         font-size: 17px;
-        
+
         font-family: var(--font-code);
         line-height: 1;
       }
@@ -354,13 +355,13 @@
       }
       .issue-val {
         font-size: 22px;
-        
+
         font-family: var(--font-code);
         line-height: 1;
       }
       .issue-lbl {
         font-size: 11px;
-        
+
         color: var(--text-muted);
         margin-top: 2px;
       }
@@ -427,7 +428,7 @@
         background: var(--card-bg);
         border-radius: 6px;
         font-size: 12px;
-        
+
         color: var(--text-muted);
         cursor: pointer;
         display: inline-flex;
@@ -521,7 +522,7 @@
       }
       .delete-modal-box h3 {
         font-size: 18px;
-        
+
         color: var(--text-main);
         margin-bottom: 8px;
       }
@@ -556,7 +557,7 @@
         background: white;
         color: var(--text-main);
         font-size: 14px;
-        
+
         cursor: pointer;
         transition: all 0.15s;
       }
@@ -571,7 +572,7 @@
         background: var(--danger);
         color: white;
         font-size: 14px;
-        
+
         cursor: pointer;
         transition: all 0.15s;
         display: flex;
@@ -840,8 +841,8 @@
             {% set score_cards = [ ('Performance', avg_performance, '#6366f1'),
             ('Accessibility', avg_accessibility, '#10b981'), ('Security',
             avg_security, '#f59e0b'), ('Functional', avg_functional, '#ec4899'),
-            ('UI / Form', None, '#3b82f6') ] %} {% for label, score, color in
-            score_cards %}
+            ('UI / Form', avg_ui_form, '#3b82f6') ] %} {% for label, score,
+            color in score_cards %}
             <div class="score-card">
               <div class="donut-wrap">
                 <canvas
@@ -1048,7 +1049,14 @@
                       >
                       <button
                         class="del-run-btn"
-                        data-run-id="{{ run.id }}" data-run-url="{{ run.target_url }}" onclick="openDeleteModal(this.dataset.runId, this.dataset.runUrl)"
+                        data-run-id="{{ run.id }}"
+                        data-run-url="{{ run.target_url }}"
+                        onclick="
+                          openDeleteModal(
+                            this.dataset.runId,
+                            this.dataset.runUrl,
+                          )
+                        "
                         title="Delete this scan"
                         aria-label="Delete scan #{{ run.id }}"
                       >
@@ -1267,8 +1275,12 @@
         btn.disabled = true;
         btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Deleting...';
 
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
         try {
-          const res = await fetch(`/run/${_deleteTargetId}/delete`, { method: 'POST' });
+          const res = await fetch(`/run/${_deleteTargetId}/delete`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrfToken },
+          });
           if (res.ok) {
             // Remove the row from the table without reload
             const row = document.querySelector(`tr[data-run-id="${_deleteTargetId}"]`);
