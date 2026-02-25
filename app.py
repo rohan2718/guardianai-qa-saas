@@ -105,8 +105,9 @@ def _make_redis() -> redis.Redis:
         config.REDIS_URL,
         max_connections=20,
         socket_connect_timeout=5,
-        socket_timeout=5,
+        socket_timeout=None,
         retry_on_timeout=True,
+        health_check_interval=30
     )
     conn = redis.Redis(connection_pool=pool)
     try:

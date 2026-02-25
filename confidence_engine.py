@@ -59,7 +59,7 @@ def compute_confidence_score(page_data: dict, active_filters: list = None) -> di
             "checks_executed": int,
             "checks_null": int,
             "completeness_ratio": float
-        }
+        }~
     """
     if not page_data:
         return {

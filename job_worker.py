@@ -6,6 +6,7 @@ Start with:
     python job_worker.py
 """
 
+import contextlib
 import logging
 import os
 import sys
@@ -34,13 +35,49 @@ STARTUP_RETRIES   = 10
 STARTUP_RETRY_SEC = 3
 
 
+# ── Windows-compatible no-op death penalty ─────────────────────────────────────
+# RQ's default death penalty uses SIGALRM which does not exist on Windows.
+# This context manager is a safe no-op replacement that lets jobs run
+# without a signal-based timeout. Job-level timeouts are enforced separately
+# via the JOB_TIMEOUT env var passed when enqueueing (see app.py / tasks.py).
+
+class _NoOpDeathPenalty:
+    """No-op context manager — replaces SIGALRM-based timeout on Windows."""
+
+    def __init__(self, timeout, exception, **kwargs):
+        pass  # timeout value intentionally ignored; no signal is registered
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False  # never suppress exceptions
+
+    def cancel(self):
+        pass
+
+    def handle_death_penalty(self, *args, **kwargs):
+        pass
+
+
+class WindowsSimpleWorker(SimpleWorker):
+    """
+    SimpleWorker subclass that replaces the SIGALRM-based death penalty
+    with a no-op so it runs correctly on Windows.
+    """
+    death_penalty_class = _NoOpDeathPenalty
+
+
+# ── Redis connection ───────────────────────────────────────────────────────────
+
 def _connect_redis() -> redis.Redis:
     pool = redis.ConnectionPool.from_url(
         REDIS_URL,
         max_connections=10,
         socket_connect_timeout=5,
-        socket_timeout=5,
+        socket_timeout=None,
         retry_on_timeout=True,
+        health_check_interval=30
     )
     conn = redis.Redis(connection_pool=pool)
 
@@ -53,7 +90,10 @@ def _connect_redis() -> redis.Redis:
             if attempt == STARTUP_RETRIES:
                 logger.error(f"Redis unreachable after {STARTUP_RETRIES} attempts. Exiting.")
                 sys.exit(1)
-            logger.warning(f"Redis not ready (attempt {attempt}/{STARTUP_RETRIES}): {e} — retrying in {STARTUP_RETRY_SEC}s")
+            logger.warning(
+                f"Redis not ready (attempt {attempt}/{STARTUP_RETRIES}): {e} "
+                f"— retrying in {STARTUP_RETRY_SEC}s"
+            )
             time.sleep(STARTUP_RETRY_SEC)
 
 
@@ -61,12 +101,10 @@ if __name__ == "__main__":
     redis_conn = _connect_redis()
     queue      = Queue("default", connection=redis_conn)
 
-    logger.info("GuardianAI worker starting (SimpleWorker — Windows mode)...")
+    logger.info("GuardianAI worker starting (WindowsSimpleWorker — SIGALRM-free mode)...")
 
-    worker = SimpleWorker(
+    worker = WindowsSimpleWorker(
         queues=[queue],
         connection=redis_conn,
     )
-    worker.work(
-        burst=False,
-    )
+    worker.work(burst=False)
