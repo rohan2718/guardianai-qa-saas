@@ -1,8 +1,38 @@
+# ─── Environment ─────────────────────────────
 .env
+venv/
+.venv/
+env/
+
+# ─── Python ──────────────────────────────────
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite3
+
+# ─── Flask Instance Folder ──────────────────
+instance/
+
+# ─── Generated Reports & Scan Artifacts ─────
 screenshots/
 reports/
 raw/
 *.xlsx
 *.json
+*.csv
+
+# ─── OS Files ───────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Logs ───────────────────────────────────
+*.log
+
+# ─── IDE ────────────────────────────────────
+.vscode/
+.idea/
+
+# ─── Playwright Browsers (if ever downloaded locally) ─
+ms-playwright/
