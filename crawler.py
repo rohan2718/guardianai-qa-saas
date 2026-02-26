@@ -1,11 +1,14 @@
 """
-crawler.py — GuardianAI Production
-Full-spectrum QA crawler integrating all engine modules.
-Extended: scan filters, ETA calculation, confidence scoring, AI learning fields.
-
-FIX: All mutable state (visited, page_data, MAX_PAGES) is now scoped inside
-     run_crawler() and passed explicitly to crawl_site(). No module-level
-     globals — safe for concurrent RQ jobs in forked workers.
+crawler.py — GuardianAI Production Refactor
+Changes:
+  - Broken links split into: broken_navigation_links, failed_assets, third_party_failures
+  - Navigation link validation via context.request.get() (no new pages)
+  - functional_score uses ONLY broken_navigation_links
+  - Memory-safe: page.close() always in finally block
+  - Rate limiting: configurable delay between pages
+  - Crawl anomaly detection
+  - Improved timeout handling with tiered fallback
+  - Logging granularity improvements
 """
 
 import asyncio
@@ -39,11 +42,25 @@ os.makedirs("screenshots", exist_ok=True)
 os.makedirs("reports", exist_ok=True)
 os.makedirs("raw", exist_ok=True)
 
-# Valid filter keys (read-only constant — safe at module level)
 VALID_FILTERS = frozenset({
     "ui_elements", "form_validation", "functional",
     "accessibility", "performance", "security",
 })
+
+# Asset extensions that should never count as broken navigation links
+ASSET_EXTENSIONS = frozenset({
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+    ".mp4", ".webm", ".ogg", ".mp3", ".wav",
+    ".css", ".js", ".json", ".xml", ".pdf",
+    ".zip", ".gz", ".tar",
+})
+
+# Inter-page crawl delay to avoid rate-limit bans (ms)
+CRAWL_DELAY_MS = int(os.environ.get("GUARDIAN_CRAWL_DELAY_MS", "500"))
+
+# Max consecutive failures before anomaly abort
+ANOMALY_FAILURE_THRESHOLD = int(os.environ.get("GUARDIAN_ANOMALY_THRESHOLD", "5"))
 
 
 # ── URL Utilities ──────────────────────────────────────────────────────────────
@@ -56,6 +73,19 @@ def normalize_url(url: str) -> str:
 
 def same_domain(base: str, url: str) -> bool:
     return urlparse(base).netloc == urlparse(url).netloc
+
+
+def is_asset_url(url: str) -> bool:
+    """Returns True if the URL points to a non-navigable asset."""
+    path = urlparse(url).path.lower()
+    _, ext = os.path.splitext(path)
+    return ext in ASSET_EXTENSIONS
+
+
+def is_third_party(base_url: str, url: str) -> bool:
+    base_netloc = urlparse(base_url).netloc.lstrip("www.")
+    url_netloc  = urlparse(url).netloc.lstrip("www.")
+    return url_netloc != base_netloc and url_netloc != ""
 
 
 # ── Filter Helper ──────────────────────────────────────────────────────────────
@@ -87,71 +117,105 @@ class ETATracker:
         return round(avg * remaining, 1)
 
 
+# ── Broken Link Classifier ─────────────────────────────────────────────────────
+
+async def classify_links(context, page, base_url: str) -> dict:
+    """
+    Classifies all <a href> links on a page into:
+      - broken_navigation_links: internal anchor links returning 4xx/5xx
+      - failed_assets:           images/scripts/fonts/media that failed to load
+      - third_party_failures:    external resources that failed
+
+    Uses context.request.get() for navigation links — no new pages opened.
+    Asset failures come from the response listener already attached to the page.
+    """
+    broken_navigation_links = []
+    failed_assets           = []
+    third_party_failures    = []
+
+    try:
+        raw_hrefs = await page.eval_on_selector_all(
+            "a[href]",
+            "els => els.map(e => e.href).filter(h => h && !h.startsWith('mailto:') && !h.startsWith('tel:') && !h.startsWith('javascript:'))"
+        )
+    except Exception as e:
+        logger.warning(f"classify_links: could not extract hrefs — {e}")
+        return {
+            "broken_navigation_links": [],
+            "failed_assets": [],
+            "third_party_failures": [],
+            "internal_links": [],
+        }
+
+    internal_links = []
+    check_targets  = []
+
+    for href in raw_hrefs:
+        norm = normalize_url(href)
+        if same_domain(base_url, norm) and not is_asset_url(norm):
+            internal_links.append(norm)
+            check_targets.append(norm)
+
+    # Deduplicate
+    check_targets = list(dict.fromkeys(check_targets))
+
+    # Validate navigation links via lightweight HEAD/GET (no page load)
+    for href in check_targets:
+        try:
+            resp = await context.request.get(
+                href,
+                timeout=8000,
+                headers={"User-Agent": "GuardianAI-LinkChecker/1.0"},
+            )
+            if resp.status >= 400:
+                broken_navigation_links.append({
+                    "url": href,
+                    "status": resp.status,
+                })
+            try:
+                await resp.dispose()
+            except Exception:
+                pass
+        except Exception as e:
+            err_str = str(e).lower()
+            # Timeout or net::ERR_* = genuinely broken
+            if "timeout" in err_str or "err_" in err_str or "net::" in err_str:
+                broken_navigation_links.append({
+                    "url": href,
+                    "status": None,
+                    "error": str(e)[:120],
+                })
+            # Otherwise (e.g. SSL mismatch on internal dev URLs) skip
+
+    return {
+        "broken_navigation_links": broken_navigation_links,
+        "failed_assets": failed_assets,           # populated from response listener
+        "third_party_failures": third_party_failures,  # populated from response listener
+        "internal_links": list(dict.fromkeys(internal_links)),
+    }
+
+
 # ── DOM Intelligence Layer ─────────────────────────────────────────────────────
 
 async def capture_dom_elements(page) -> dict:
-    """
-    Deep DOM inspection: UI elements, forms, pagination, dropdowns,
-    accordion, tabs, modals, breadcrumbs, sidebar, navigation.
-    """
     try:
         data = await page.evaluate("""() => {
-            const ui_elements = [];
-            const interactive = document.querySelectorAll(
+            const ui_elements = [...document.querySelectorAll(
                 'button, a[href], input, select, textarea, [role="button"], [role="link"]'
-            );
-            // Build a minimal XPath for an element (id-based or positional)
-            function getXPath(el) {
-                if (el.id) return '//*[@id="' + el.id + '"]';
-                const parts = [];
-                let cur = el;
-                while (cur && cur.nodeType === 1) {
-                    let idx = 1;
-                    let sib = cur.previousSibling;
-                    while (sib) { if (sib.nodeType === 1 && sib.tagName === cur.tagName) idx++; sib = sib.previousSibling; }
-                    parts.unshift(cur.tagName.toLowerCase() + (idx > 1 ? '[' + idx + ']' : ''));
-                    cur = cur.parentNode;
-                    if (cur === document.body) { parts.unshift('body'); break; }
-                }
-                return '/' + parts.join('/');
-            }
-
-            interactive.forEach(el => {
-                ui_elements.push({
-                    tag:   el.tagName.toLowerCase(),
-                    type:  el.type || el.getAttribute('role') || null,
-                    text:  (el.innerText || el.value || el.placeholder || '').substring(0, 80),
-                    id:    el.id || null,
-                    name:  el.name || null,
-                    href:  el.href || null,
-                    xpath: getXPath(el),
-                    visible: !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length),
-                });
-            });
-
-            // Forms
-            const forms = [];
-            document.querySelectorAll('form').forEach(form => {
-                const fields = [];
-                form.querySelectorAll('input, select, textarea, button').forEach(f => {
-                    fields.push({
-                        tag:      f.tagName.toLowerCase(),
-                        type:     f.type || null,
-                        name:     f.name || null,
-                        id:       f.id || null,
-                        required: f.required,
-                        label:    (document.querySelector('label[for="' + f.id + '"]') || {}).innerText || null,
-                    });
-                });
-                forms.push({
-                    action:      form.action || '',
-                    method:      form.method || 'get',
-                    field_count: fields.length,
-                    fields:      fields,
-                });
-            });
-
-            // Navigation / dropdowns / tabs / modals / etc.
+            )].slice(0, 200).map(el => ({
+                tag: el.tagName.toLowerCase(),
+                type: el.getAttribute('type') || null,
+                id: el.id || null,
+                text: (el.innerText || el.value || '').substring(0, 80),
+                visible: el.offsetParent !== null,
+            }));
+            const forms = [...document.querySelectorAll('form')].map(f => ({
+                id: f.id || null, action: f.action || null, method: f.method || 'get',
+                inputs: [...f.querySelectorAll('input,select,textarea')].map(i => ({
+                    type: i.type || 'text', name: i.name || null,
+                    required: i.required, has_label: !!document.querySelector(`label[for="${i.id}"]`) || !!i.closest('label'),
+                }))
+            }));
             const nav_menus    = [...document.querySelectorAll('nav, [role="navigation"]')].map(n => ({id: n.id || null, items: n.querySelectorAll('a').length}));
             const dropdowns    = [...document.querySelectorAll('select, [role="listbox"], .dropdown')].map(d => ({id: d.id || null}));
             const tabs         = [...document.querySelectorAll('[role="tab"], .tab')].map(t => ({text: (t.innerText || '').substring(0, 60)}));
@@ -160,21 +224,12 @@ async def capture_dom_elements(page) -> dict:
             const pagination   = [...document.querySelectorAll('[aria-label*="paginat"], .pagination, [class*="paginat"]')].map(p => ({id: p.id || null}));
             const breadcrumbs_el = document.querySelector('[aria-label*="breadcrumb"], .breadcrumb, nav[aria-label]');
             const sidebar_el     = document.querySelector('aside, [role="complementary"], .sidebar');
-
             const images  = document.querySelectorAll('img').length;
             const buttons = document.querySelectorAll('button, [role="button"]').length;
             const links   = document.querySelectorAll('a[href]').length;
-
             return {
-                ui_elements,
-                ui_summary: { images, buttons, links },
-                forms,
-                nav_menus,
-                dropdowns,
-                tabs,
-                modals,
-                accordions,
-                pagination,
+                ui_elements, ui_summary: { images, buttons, links },
+                forms, nav_menus, dropdowns, tabs, modals, accordions, pagination,
                 breadcrumbs: { found: !!breadcrumbs_el },
                 sidebar:     { found: !!sidebar_el },
             };
@@ -183,6 +238,30 @@ async def capture_dom_elements(page) -> dict:
     except Exception as e:
         logger.warning(f"capture_dom_elements failed: {e}")
         return {}
+
+
+# ── Crawl Anomaly Detection ────────────────────────────────────────────────────
+
+class CrawlAnomalyDetector:
+    def __init__(self, threshold: int = ANOMALY_FAILURE_THRESHOLD):
+        self.threshold       = threshold
+        self.consecutive_err = 0
+        self.anomalies       = []
+
+    def record_success(self):
+        self.consecutive_err = 0
+
+    def record_failure(self, url: str, reason: str):
+        self.consecutive_err += 1
+        self.anomalies.append({"url": url, "reason": reason})
+        if self.consecutive_err >= self.threshold:
+            logger.warning(
+                f"[ANOMALY] {self.consecutive_err} consecutive failures — "
+                f"possible rate-limit or structural block. Last: {url}"
+            )
+
+    def should_abort(self) -> bool:
+        return self.consecutive_err >= self.threshold * 2  # abort at 2x threshold
 
 
 # ── Main Crawl Loop ────────────────────────────────────────────────────────────
@@ -197,15 +276,16 @@ async def crawl_site(
     active_filters: list | None = None,
     update_fn=None,
 ):
-    """
-    BFS crawler. All mutable state (visited, page_data) is passed in
-    explicitly — no module-level globals.
-    """
-    queue = [normalize_url(base_url)]
-    eta_tracker = ETATracker()
+    queue        = [normalize_url(base_url)]
+    eta_tracker  = ETATracker()
+    anomaly_det  = CrawlAnomalyDetector()
 
     while queue:
-        if max_pages and len(page_data) >= max_pages:
+        if max_pages is not None and len(page_data) >= int(max_pages):
+            break
+
+        if anomaly_det.should_abort():
+            logger.error(f"[ABORT] Too many consecutive failures — stopping crawl at {len(page_data)} pages")
             break
 
         current_url = queue.pop(0)
@@ -215,88 +295,136 @@ async def crawl_site(
             continue
 
         visited.add(current_url)
-        page_start = time.time()
+        page_start       = time.time()
         discovered_count = len(visited) + len(queue)
 
-        logger.info(f"Scanning [{len(page_data)+1}/{max_pages or '?'}]: {current_url}")
+        logger.info(f"[{len(page_data)+1}/{max_pages or '?'}] Scanning: {current_url}")
 
         page = await context.new_page()
         try:
-            failed_requests = []
-            js_errors       = []
-            page.on("requestfailed", lambda req: failed_requests.append(req.url))
-            page.on("pageerror",     lambda err: js_errors.append(str(err)))
-
-            error_responses  = []
-            redirect_count   = [0]
+            # ── Response listeners — classify ALL network responses ──
+            failed_assets        = []
+            third_party_failures = []
+            js_errors            = []
+            redirect_count       = [0]
 
             def handle_response(response):
-                if 300 <= response.status < 400:
+                url  = response.url
+                stat = response.status
+                if 300 <= stat < 400:
                     redirect_count[0] += 1
-                if response.status >= 400:
-                    ct = response.headers.get("content-type") or ""
-                    if "text/html" in ct:
-                        error_responses.append({"url": response.url, "status": response.status})
+                if stat >= 400:
+                    if is_asset_url(url):
+                        failed_assets.append({"url": url, "status": stat})
+                    elif is_third_party(base_url, url):
+                        third_party_failures.append({"url": url, "status": stat})
 
-            page.on("response", handle_response)
+            def handle_request_failed(req):
+                url = req.url
+                if is_asset_url(url):
+                    failed_assets.append({"url": url, "status": None, "error": req.failure or ""})
+                elif is_third_party(base_url, url):
+                    third_party_failures.append({"url": url, "status": None})
+                # internal non-asset failures are caught by classify_links
 
-            # Navigate with graceful fallback
-            try:
-                response = await page.goto(current_url, wait_until="domcontentloaded", timeout=30000)
-            except Exception:
+            page.on("response",      handle_response)
+            page.on("requestfailed", handle_request_failed)
+            page.on("pageerror",     lambda err: js_errors.append(str(err)))
+
+            # ── Navigate with tiered timeout fallback ──
+            response = None
+            for wait_until, timeout in [("domcontentloaded", 30000), ("load", 30000), ("commit", 15000)]:
                 try:
-                    response = await page.goto(current_url, wait_until="load", timeout=30000)
-                except Exception:
-                    response = await page.goto(current_url, wait_until="commit", timeout=15000)
+                    response = await page.goto(current_url, wait_until=wait_until, timeout=timeout)
+                    break
+                except Exception as nav_err:
+                    logger.debug(f"nav fallback [{wait_until}] for {current_url}: {nav_err}")
+                    response = None
 
-            await page.wait_for_timeout(2000)
+            if response is None:
+                logger.warning(f"All navigation attempts failed for {current_url}")
+                anomaly_det.record_failure(current_url, "navigation_failed")
+                continue
 
-            # ── Engine execution gated by active filters ──
-            dom_data    = {}
-            perf_raw    = {}
-            a11y_raw    = {}
+            await page.wait_for_timeout(1500)  # reduced from 2000ms
+
+            status = response.status if response else 0
+            title  = ""
+            try:
+                title = await page.title()
+            except Exception:
+                pass
+
+            # ── Engine execution gated by filters ──
+            dom_data     = {}
+            perf_raw     = {}
+            a11y_raw     = {}
             security_raw = {}
 
             if _filter_active(active_filters, "ui_elements") or \
                _filter_active(active_filters, "form_validation") or \
                not active_filters:
-                dom_data = await capture_dom_elements(page)
+                try:
+                    dom_data = await capture_dom_elements(page)
+                except Exception as e:
+                    logger.warning(f"DOM capture failed {current_url}: {e}")
 
             if _filter_active(active_filters, "performance"):
-                perf_raw = await capture_performance_metrics(page)
+                try:
+                    perf_raw = await capture_performance_metrics(page)
+                except Exception as e:
+                    logger.warning(f"Perf capture failed {current_url}: {e}")
 
             if _filter_active(active_filters, "accessibility"):
-                a11y_raw = await capture_accessibility_data(page)
+                try:
+                    a11y_raw = await capture_accessibility_data(page)
+                except Exception as e:
+                    logger.warning(f"A11y capture failed {current_url}: {e}")
 
             if _filter_active(active_filters, "security"):
-                security_raw = await capture_security_data(page, response, current_url)
+                try:
+                    security_raw = await capture_security_data(page, response, current_url)
+                except Exception as e:
+                    logger.warning(f"Security capture failed {current_url}: {e}")
 
-            title  = await page.title()
-            status = response.status if response else 0
-
+            # ── Screenshot ──
             screenshot_path = f"screenshots/run_{run_id}_{int(time.time()*1000)}.png"
             try:
-                await page.screenshot(path=screenshot_path, full_page=True)
+                await page.screenshot(path=screenshot_path, full_page=True, timeout=10000)
             except Exception:
                 screenshot_path = None
 
-            links = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
-            internal_links = list(set(
-                normalize_url(l) for l in links
-                if same_domain(base_url, l)
-            ))
+            # ── REFACTORED: Classify broken links ──
+            link_data = {"broken_navigation_links": [], "failed_assets": [], "third_party_failures": [], "internal_links": []}
+            if _filter_active(active_filters, "functional") or not active_filters:
+                try:
+                    link_data = await classify_links(context, page, base_url)
+                    # Merge asset/third-party failures from response listener into link_data
+                    link_data["failed_assets"]        += failed_assets
+                    link_data["third_party_failures"] += third_party_failures
+                except Exception as e:
+                    logger.warning(f"Link classification failed {current_url}: {e}")
+                    link_data["failed_assets"]       = failed_assets
+                    link_data["third_party_failures"] = third_party_failures
+
+            internal_links = link_data["internal_links"]
+
+            # Enqueue unvisited internal links
             for link in internal_links:
                 if link not in visited and link not in queue:
                     queue.append(link)
 
             # ── Compute scores ──
-            perf_score_data  = compute_performance_score(perf_raw)  if perf_raw  else {"score": None, "grade": None, "slow_indicators": []}
-            a11y_score_data  = compute_accessibility_score(a11y_raw) if a11y_raw  else {"score": None, "risk_level": None, "wcag_violations": []}
-            sec_score_data   = compute_security_score(security_raw)  if security_raw else {"score": None, "risk_level": None}
-            analyzed_forms   = analyze_all_forms(dom_data.get("forms") or []) if dom_data else []
+            perf_score_data = compute_performance_score(perf_raw)  if perf_raw  else {"score": None, "grade": None, "slow_indicators": []}
+            a11y_score_data = compute_accessibility_score(a11y_raw) if a11y_raw  else {"score": None, "risk_level": None, "wcag_violations": []}
+            sec_score_data  = compute_security_score(security_raw)  if security_raw else {"score": None, "risk_level": None}
+            analyzed_forms  = analyze_all_forms(dom_data.get("forms") or []) if dom_data else []
 
-            # Broken link check (error responses from this page's resources)
-            broken_links_raw = [e["url"] for e in error_responses]
+            load_ms = None
+            try:
+                load_ms = (perf_raw or {}).get("load_event_end_ms", 0) / 1000 if perf_raw else None
+            except Exception:
+                pass
 
             page_object = {
                 "url":        current_url,
@@ -318,17 +446,17 @@ async def crawl_site(
                 "breadcrumbs": dom_data.get("breadcrumbs", {}),
                 "sidebar":     dom_data.get("sidebar", {}),
 
-                # Topology — internal links found on this page (drives the site map graph)
+                # Topology
                 "connected_pages": internal_links,
 
                 # Performance
                 "performance_metrics": perf_raw,
                 "performance_score":   perf_score_data.get("score"),
                 "performance_grade":   perf_score_data.get("grade"),
-                "load_time": (perf_raw or {}).get("load_event_end_ms", 0) / 1000 if perf_raw else None,
-                "fcp_ms":    (perf_raw or {}).get("fcp_ms"),
-                "lcp_ms":    (perf_raw or {}).get("lcp_ms"),
-                "ttfb_ms":   (perf_raw or {}).get("ttfb_ms"),
+                "load_time":           load_ms,
+                "fcp_ms":  (perf_raw or {}).get("fcp_ms"),
+                "lcp_ms":  (perf_raw or {}).get("lcp_ms"),
+                "ttfb_ms": (perf_raw or {}).get("ttfb_ms"),
 
                 # Accessibility
                 "accessibility_data":   a11y_raw,
@@ -342,17 +470,21 @@ async def crawl_site(
                 "security_risk":  sec_score_data.get("risk_level"),
                 "is_https":       (security_raw or {}).get("is_https"),
 
-                # Functional
-                "broken_links":          broken_links_raw,
-                "js_errors":             js_errors,
-                "failed_requests":       failed_requests,
-                "redirect_chain_length": redirect_count[0],
+                # REFACTORED Functional — broken links now separated
+                "broken_navigation_links": link_data["broken_navigation_links"],
+                "failed_assets":           link_data["failed_assets"],
+                "third_party_failures":    link_data["third_party_failures"],
+                # Legacy alias kept for DB compat — points to nav links only
+                "broken_links":            link_data["broken_navigation_links"],
+                "js_errors":               js_errors,
+                "failed_requests":         [],  # no longer used for scoring
+                "redirect_chain_length":   redirect_count[0],
 
                 # Screenshot
                 "screenshot": screenshot_path,
             }
 
-            # Component scores
+            # ── Component scores ──
             if _filter_active(active_filters, "functional"):
                 func_score_data = compute_functional_score(page_object)
                 page_object["functional_score"] = func_score_data.get("score")
@@ -366,7 +498,7 @@ async def crawl_site(
             else:
                 page_object["ui_form_score"] = None
 
-            # Composite health score
+            # Composite health
             health_data = compute_page_health_score(
                 performance_score=page_object["performance_score"],
                 accessibility_score=page_object["accessibility_score"],
@@ -378,10 +510,9 @@ async def crawl_site(
             page_object["risk_category"]    = health_data.get("risk_category")
             page_object["health_breakdown"] = health_data
 
-            # Confidence + AI learning fields
             enrich_page_with_ai_fields(page_object, active_filters)
-
             page_data.append(page_object)
+            anomaly_det.record_success()
 
             # ETA update
             elapsed   = time.time() - page_start
@@ -404,68 +535,40 @@ async def crawl_site(
                 except Exception:
                     pass
 
+            logger.info(
+                f"  ✓ status={status} health={page_object.get('health_score')} "
+                f"nav_broken={len(link_data['broken_navigation_links'])} "
+                f"asset_fail={len(link_data['failed_assets'])} "
+                f"3p_fail={len(link_data['third_party_failures'])} "
+                f"js_err={len(js_errors)} elapsed={round(elapsed,2)}s"
+            )
+
         except Exception as e:
-            logger.error(f"Error crawling {current_url}: {e}")
+            logger.error(f"Error crawling {current_url}: {e}", exc_info=True)
+            anomaly_det.record_failure(current_url, str(e)[:120])
         finally:
-            await page.close()
+            # CRITICAL: always close page to prevent memory leak
+            try:
+                await page.close()
+            except Exception:
+                pass
+
+        # Rate-limit protection
+        if CRAWL_DELAY_MS > 0:
+            await asyncio.sleep(CRAWL_DELAY_MS / 1000.0)
 
 
-# ── Entry Point ────────────────────────────────────────────────────────────────
+# ── Report Builder ─────────────────────────────────────────────────────────────
 
-async def main(
-    run_id:       int,
-    start_url:    str,
-    user_id:      int,
-    page_limit=None,
-    update_fn=None,
-    active_filters: list | None = None,
-):
-    """
-    Entry point called by tasks.py via asyncio.run().
-    All mutable crawl state is local to this call — fully isolated per job.
-    """
-    # ── Scoped state — NOT module-level globals ──
-    visited:   set  = set()
-    page_data: list = []
-    max_pages: int | None = int(page_limit) if page_limit and str(page_limit).isdigit() else None
-
-    # Validate + normalise filters
-    # "accessibility_audit" is the key used by confidence_engine; map it to "accessibility"
-    FILTER_ALIASES = {"accessibility_audit": "accessibility"}
-    if active_filters:
-        active_filters = [
-            FILTER_ALIASES.get(f, f)
-            for f in active_filters
-            if FILTER_ALIASES.get(f, f) in VALID_FILTERS
-        ] or None
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent="GuardianAI/4.0 QA Bot",
-        )
-        await crawl_site(
-            context,
-            start_url,
-            run_id,
-            visited=visited,
-            page_data=page_data,
-            max_pages=max_pages,
-            active_filters=active_filters,
-            update_fn=update_fn,
-        )
-        await browser.close()
-
-    # ── Build Excel report ──
+async def build_reports(run_id: int, page_data: list, active_filters: list | None):
     rows = []
     for pg in page_data:
         ui_s = pg.get("ui_summary") or {}
         rows.append({
-            "URL":                  pg["url"],
-            "Title":                pg["title"],
-            "Status":               pg["status"],
-            "Result":               pg["result"],
+            "URL":                  pg.get("url"),
+            "Title":                pg.get("title"),
+            "Status":               pg.get("status"),
+            "Result":               pg.get("result"),
             "Load Time (s)":        pg.get("load_time"),
             "FCP (ms)":             pg.get("fcp_ms"),
             "LCP (ms)":             pg.get("lcp_ms"),
@@ -484,7 +587,10 @@ async def main(
             "Confidence Score":     pg.get("confidence_score"),
             "Failure Pattern ID":   pg.get("failure_pattern_id"),
             "Root Cause Tag":       pg.get("root_cause_tag"),
-            "Broken Links":         len(pg.get("broken_links") or []),
+            # REFACTORED: separate broken link columns
+            "Broken Nav Links":     len(pg.get("broken_navigation_links") or []),
+            "Failed Assets":        len(pg.get("failed_assets") or []),
+            "3rd Party Failures":   len(pg.get("third_party_failures") or []),
             "JS Errors":            len(pg.get("js_errors") or []),
             "Redirect Chain":       pg.get("redirect_chain_length", 0),
             "Forms Count":          len(pg.get("forms") or []),
@@ -534,3 +640,61 @@ async def main(
         "confidence_score":  run_confidence,
         "active_filters":    active_filters,
     }
+
+
+# ── Entry Point ────────────────────────────────────────────────────────────────
+
+async def main(
+    run_id:         int,
+    start_url:      str,
+    user_id:        int,
+    page_limit=None,
+    update_fn=None,
+    active_filters: list | None = None,
+):
+    visited   = set()
+    page_data = []
+
+    # Always resolve to int or None — never pass a raw string into crawl_site
+    try:
+        max_pages = int(page_limit) if page_limit not in (None, "", "None", "null") else None
+    except (TypeError, ValueError):
+        max_pages = None
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            ignore_https_errors=True,
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
+        try:
+            await crawl_site(
+                context=context,
+                base_url=start_url,
+                run_id=run_id,
+                visited=visited,
+                page_data=page_data,
+                max_pages=max_pages,
+                active_filters=active_filters,
+                update_fn=update_fn,
+            )
+        finally:
+            await context.close()
+            await browser.close()
+
+    return await build_reports(run_id, page_data, active_filters)
+
+
+def run_crawler(run_id, start_url, user_id, page_limit=None, update_fn=None, active_filters=None):
+    """Sync entry point called by RQ worker via tasks.py."""
+    return asyncio.run(
+        main(
+            run_id=run_id,
+            start_url=start_url,
+            user_id=user_id,
+            page_limit=page_limit,
+            update_fn=update_fn,
+            active_filters=active_filters,
+        )
+    )

@@ -54,6 +54,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from ai_analyzer import analyze_site
 from analytics import generate_metrics, generate_metrics_from_run
+from dashboard_intelligence import build_dashboard_intelligence
 from models import db, User, TestRun, PageResult
 
 logging.basicConfig(level=logging.INFO)
@@ -300,6 +301,19 @@ def enrich_run_context(run: TestRun) -> dict:
     # Active scan filters — read from JSONB column (already a list)
     active_filters = run.scan_filters or []
 
+    # Dashboard intelligence bundle
+    intel = {}
+    if raw_data:
+        try:
+            intel = build_dashboard_intelligence(
+                pages=raw_data,
+                run_confidence=run.confidence_score or 0.0,
+                active_filters=active_filters,
+                max_pages=getattr(run, "page_limit", None),
+            )
+        except Exception as exc:
+            logger.warning("build_dashboard_intelligence failed: %s", exc)
+
     return {
         "data":             report_data,
         "ai_insight":       ai_insight,
@@ -310,6 +324,7 @@ def enrich_run_context(run: TestRun) -> dict:
         "active_filters":   active_filters,
         "scan_filter_defs": SCAN_FILTER_DEFS,
         "filter_icons":     FILTER_ICONS,
+        "intel":            intel,
     }
 
 
@@ -467,8 +482,13 @@ def home():
     if request.method == "POST":
         from tasks import run_scan
 
-        url         = request.form.get("url", "").strip()
-        page_limit  = request.form.get("page_limit") or str(current_user.page_limit_default)
+        url = request.form.get("url", "").strip()
+
+        # ── Resolve page_limit as int immediately — never pass a raw string downstream ──
+        try:
+            page_limit = int(request.form.get("page_limit") or current_user.page_limit_default)
+        except (TypeError, ValueError):
+            page_limit = int(current_user.page_limit_default)
 
         selected_filters = request.form.getlist("scan_filters")
         active_filters   = [f for f in selected_filters if f in VALID_FILTER_KEYS]
@@ -491,10 +511,7 @@ def home():
 
         page_cap = limits.get("pages_per_scan")
         if page_cap is not None:
-            try:
-                page_limit = str(min(int(page_limit), page_cap))
-            except (TypeError, ValueError):
-                page_limit = str(page_cap)
+            page_limit = min(page_limit, page_cap)
 
         run = TestRun(
             target_url=url,
@@ -533,7 +550,8 @@ def home():
         ctx.update(enrich_run_context(run))
     else:
         ctx.update({"data": [], "ai_insight": None, "metrics": {},
-                    "raw_data": [], "site_health": None, "current_run": None})
+                    "raw_data": [], "site_health": None, "current_run": None,
+                    "intel": {}})
 
     return render_template("index.html", **ctx)
 
@@ -551,6 +569,7 @@ def _empty_ctx(error: str = None, active_filters: list = None) -> dict:
         "scan_filter_defs": SCAN_FILTER_DEFS,
         "active_filters":   active_filters or list(VALID_FILTER_KEYS),
         "filter_icons":     FILTER_ICONS,
+        "intel":            {},
     }
 
 
@@ -578,6 +597,7 @@ def new_scan():
         scan_filter_defs=SCAN_FILTER_DEFS,
         active_filters=list(VALID_FILTER_KEYS),
         filter_icons=FILTER_ICONS,
+        intel={},
     )
 
 
@@ -1017,6 +1037,7 @@ def dashboard():
     avg_a11y      = base_q.with_entities(func.avg(TestRun.avg_accessibility_score)).scalar()
     avg_sec       = base_q.with_entities(func.avg(TestRun.avg_security_score)).scalar()
     avg_func      = base_q.with_entities(func.avg(TestRun.avg_functional_score)).scalar()
+    avg_ui_form   = base_q.with_entities(func.avg(TestRun.avg_ui_form_score)).scalar()
     avg_health    = base_q.with_entities(func.avg(TestRun.site_health_score)).scalar()
     avg_confidence = base_q.with_entities(func.avg(TestRun.confidence_score)).scalar()
 
@@ -1040,6 +1061,34 @@ def dashboard():
     )
 
     trend_runs = base_q.order_by(TestRun.id.desc()).limit(10).all()[::-1]
+    # ── Top AI Suggestions across recent runs ─────────────────────────────────
+    # Pull the top 8 worst pages (by health score) from the most recent completed run
+    top_suggestions = []
+    latest_completed = (
+        base_q
+        .filter(TestRun.status == "completed")
+        .order_by(TestRun.id.desc())
+        .first()
+    )
+    if latest_completed:
+        from models import PageResult
+        worst_pages = (
+            PageResult.query
+            .filter_by(run_id=latest_completed.id)
+            .filter(PageResult.self_healing_suggestion.isnot(None))
+            .order_by(PageResult.health_score.asc().nullslast())
+            .limit(8)
+            .all()
+        )
+        top_suggestions = [
+            {
+                "url":        p.url,
+                "health":     p.health_score,
+                "risk":       p.risk_category,
+                "suggestion": p.self_healing_suggestion,
+            }
+            for p in worst_pages
+        ]
     trend_labels     = [r.started_at.strftime("%d %b") if r.started_at else "" for r in trend_runs]
     trend_health     = [r.site_health_score          or 0 for r in trend_runs]
     trend_perf       = [r.avg_performance_score       or 0 for r in trend_runs]
@@ -1058,6 +1107,7 @@ def dashboard():
         avg_accessibility=_r(avg_a11y),
         avg_security=_r(avg_sec),
         avg_functional=_r(avg_func),
+        avg_ui_form=_r(avg_ui_form),
         avg_health=_r(avg_health),
         avg_confidence=_r(avg_confidence),
         total_a11y_issues=total_a11y_issues,
