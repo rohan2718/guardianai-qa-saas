@@ -395,17 +395,23 @@ async def crawl_site(
                 screenshot_path = None
 
             # ── REFACTORED: Classify broken links ──
+            # NOTE: classify_links is ALWAYS called so internal_links are discovered
+            # for the crawl queue regardless of active filters.
+            # Broken-link *scoring* data is only used when "functional" filter is active.
             link_data = {"broken_navigation_links": [], "failed_assets": [], "third_party_failures": [], "internal_links": []}
-            if _filter_active(active_filters, "functional") or not active_filters:
-                try:
-                    link_data = await classify_links(context, page, base_url)
-                    # Merge asset/third-party failures from response listener into link_data
-                    link_data["failed_assets"]        += failed_assets
-                    link_data["third_party_failures"] += third_party_failures
-                except Exception as e:
-                    logger.warning(f"Link classification failed {current_url}: {e}")
-                    link_data["failed_assets"]       = failed_assets
-                    link_data["third_party_failures"] = third_party_failures
+            try:
+                link_data = await classify_links(context, page, base_url)
+                # Merge asset/third-party failures from response listener into link_data
+                link_data["failed_assets"]        += failed_assets
+                link_data["third_party_failures"] += third_party_failures
+            except Exception as e:
+                logger.warning(f"Link classification failed {current_url}: {e}")
+                link_data["failed_assets"]        = failed_assets
+                link_data["third_party_failures"] = third_party_failures
+
+            # Gate broken-link scoring data behind the functional filter
+            if not (_filter_active(active_filters, "functional") or not active_filters):
+                link_data["broken_navigation_links"] = []
 
             internal_links = link_data["internal_links"]
 

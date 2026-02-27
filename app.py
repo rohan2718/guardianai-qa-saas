@@ -54,7 +54,6 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from ai_analyzer import analyze_site
 from analytics import generate_metrics, generate_metrics_from_run
-from dashboard_intelligence import build_dashboard_intelligence
 from models import db, User, TestRun, PageResult
 
 logging.basicConfig(level=logging.INFO)
@@ -303,17 +302,6 @@ def enrich_run_context(run: TestRun) -> dict:
 
     # Dashboard intelligence bundle
     intel = {}
-    if raw_data:
-        try:
-            intel = build_dashboard_intelligence(
-                pages=raw_data,
-                run_confidence=run.confidence_score or 0.0,
-                active_filters=active_filters,
-                max_pages=getattr(run, "page_limit", None),
-            )
-        except Exception as exc:
-            logger.warning("build_dashboard_intelligence failed: %s", exc)
-
     return {
         "data":             report_data,
         "ai_insight":       ai_insight,
