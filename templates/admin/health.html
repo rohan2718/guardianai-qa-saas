@@ -1,0 +1,211 @@
+{% extends "admin/base.html" %} {% block title %}System Health{% endblock %} {%
+block page_title %}System Health{% endblock %} {% block content %}
+<div
+  style="
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  "
+>
+  <div
+    class="card card-accent fade-in-up"
+    style="
+      transition:
+        box-shadow 0.2s,
+        transform 0.2s;
+    "
+  >
+    <div class="card-title">Database</div>
+    <div
+      style="
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 800;
+      "
+    >
+      <span class="health-dot {% if db_ok %}ok{% else %}err{% endif %}"></span>
+      {% if db_ok %}<span class="c-success">Connected</span> {% else %}<span
+        class="c-danger"
+        >Unreachable</span
+      >{% endif %}
+    </div>
+    <div style="margin-top: 10px; font-size: 12px; color: var(--text-muted)">
+      PostgreSQL
+    </div>
+  </div>
+
+  <div class="card card-accent fade-in-up delay-1">
+    <div class="card-title">Redis</div>
+    <div
+      style="
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 18px;
+        font-weight: 800;
+      "
+    >
+      <span
+        class="health-dot {% if redis_ok %}ok{% else %}err{% endif %}"
+      ></span>
+      {% if redis_ok %}<span class="c-success">Connected</span> {% else %}<span
+        class="c-danger"
+        >Unreachable</span
+      >{% endif %}
+    </div>
+    <div style="margin-top: 10px; font-size: 12px; color: var(--text-muted)">
+      Job queue backend
+    </div>
+  </div>
+
+  <div class="card card-accent fade-in-up delay-2">
+    <div class="card-title">Queue Depth</div>
+    <div
+      style="font-size: 32px; font-weight: 800; font-family: var(--font-code)"
+      class="{% if queue_depth and queue_depth > 20 %}c-warning{% else %}c-success{% endif %}"
+    >
+      {% if queue_depth is not none %}<span data-counter="{{ queue_depth }}"
+        >{{ queue_depth }}</span
+      >{% else %}<span style="color: var(--text-muted); font-size: 22px"
+        >N/A</span
+      >{% endif %}
+    </div>
+    <div style="margin-top: 6px; font-size: 12px; color: var(--text-muted)">
+      Jobs waiting
+    </div>
+  </div>
+
+  <div class="card card-accent fade-in-up delay-3">
+    <div class="card-title">Active Workers</div>
+    <div
+      style="font-size: 32px; font-weight: 800; font-family: var(--font-code)"
+      class="{% if worker_count and worker_count > 0 %}c-success{% else %}c-danger{% endif %}"
+    >
+      {% if worker_count is not none %}<span data-counter="{{ worker_count }}"
+        >{{ worker_count }}</span
+      >{% else %}<span style="color: var(--text-muted); font-size: 22px"
+        >N/A</span
+      >{% endif %}
+    </div>
+    <div style="margin-top: 6px; font-size: 12px; color: var(--text-muted)">
+      RQ workers running
+    </div>
+  </div>
+
+  <div class="card card-accent fade-in-up delay-4">
+    <div class="card-title">Failed Jobs</div>
+    <div
+      style="font-size: 32px; font-weight: 800; font-family: var(--font-code)"
+      class="{% if failed_count and failed_count > 0 %}c-danger{% else %}c-success{% endif %}"
+    >
+      {% if failed_count is not none %}<span data-counter="{{ failed_count }}"
+        >{{ failed_count }}</span
+      >{% else %}<span style="color: var(--text-muted); font-size: 22px"
+        >N/A</span
+      >{% endif %}
+    </div>
+    <div style="margin-top: 6px; font-size: 12px; color: var(--text-muted)">
+      In failed queue
+    </div>
+  </div>
+
+  <div class="card card-accent fade-in-up delay-5">
+    <div class="card-title">Pending Scans (DB)</div>
+    <div
+      style="font-size: 32px; font-weight: 800; font-family: var(--font-code)"
+      class="{% if pending_scans > 0 %}c-warning{% else %}c-success{% endif %}"
+    >
+      <span data-counter="{{ pending_scans }}">{{ pending_scans }}</span>
+    </div>
+    <div style="margin-top: 6px; font-size: 12px; color: var(--text-muted)">
+      queued + running
+    </div>
+  </div>
+
+  <div class="card card-accent fade-in-up delay-5">
+    <div class="card-title">App Uptime</div>
+    <div
+      style="
+        font-size: 22px;
+        font-weight: 800;
+        font-family: var(--font-code);
+        color: var(--text-main);
+      "
+    >
+      {{ uptime_str }}
+    </div>
+    <div style="margin-top: 6px; font-size: 12px; color: var(--text-muted)">
+      Process start time
+    </div>
+  </div>
+</div>
+
+<div class="card card-accent fade-in-up delay-3">
+  <div class="card-title">Health Summary</div>
+  <div
+    style="display: flex; flex-direction: column; gap: 10px; font-size: 13px"
+  >
+    {% macro health_row(label, ok, detail='') %}
+    <div
+      style="display:flex;align-items:center;gap:12px;padding:11px 16px;
+                background:{% if ok %}rgba(16,185,129,0.04){% else %}rgba(239,68,68,0.04){% endif %};
+                border:1px solid {% if ok %}rgba(16,185,129,0.15){% else %}rgba(239,68,68,0.15){% endif %};
+                border-radius:var(--radius-sm);
+                transition:transform 0.15s,box-shadow 0.15s;"
+      onmouseover="this.style.transform = 'translateX(3px)'"
+      onmouseout="this.style.transform = ''"
+    >
+      <span class="health-dot {% if ok %}ok{% else %}err{% endif %}"></span>
+      <span style="font-weight: 600; min-width: 180px; color: var(--text-main)"
+        >{{ label }}</span
+      >
+      {% if ok %}
+      <span
+        class="c-success"
+        style="
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
+        "
+        >OK</span
+      >
+      {% else %}
+      <span
+        class="c-danger"
+        style="
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.6px;
+        "
+        >FAIL</span
+      >
+      {% endif %} {% if detail %}
+      <span
+        style="
+          color: var(--text-muted);
+          font-size: 11px;
+          font-family: var(--font-code);
+          margin-left: 4px;
+        "
+        >{{ detail }}</span
+      >
+      {% endif %}
+    </div>
+    {% endmacro %} {{ health_row("PostgreSQL Database", db_ok) }} {{
+    health_row("Redis Connection", redis_ok) }} {{ health_row("RQ Workers
+    Present", worker_count and worker_count > 0, detail=(worker_count|string ~ "
+    worker(s)" if worker_count is not none else "")) }} {{ health_row("Queue Not
+    Backed Up", not (queue_depth and queue_depth > 50),
+    detail=(queue_depth|string ~ " jobs" if queue_depth is not none else "")) }}
+    {{ health_row("No Failed Jobs", not (failed_count and failed_count > 0),
+    detail=(failed_count|string ~ " failed" if failed_count else "")) }} {{
+    health_row("No Stuck Scans", pending_scans < 10,
+    detail=(pending_scans|string ~ " pending")) }}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,219 @@
+{% extends "admin/base.html" %} {% block title %}Dashboard{% endblock %} {%
+block page_title %}Platform Dashboard{% endblock %} {% block content %}
+<div class="stat-grid fade-in-up">
+  <div class="stat-card">
+    <div class="label">Total Users</div>
+    <div class="value c-primary" data-counter="{{ total_users }}">
+      {{ total_users }}
+    </div>
+    <div class="sublabel">
+      {{ admin_users }} admin{% if admin_users != 1 %}s{% endif %}
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Active Users</div>
+    <div class="value c-success" data-counter="{{ active_users }}">
+      {{ active_users }}
+    </div>
+    <div class="sublabel">{{ suspended_users }} suspended</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Total Scans</div>
+    <div class="value c-primary" data-counter="{{ total_scans }}">
+      {{ total_scans }}
+    </div>
+    <div class="sublabel">{{ scans_7d }} this week</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Avg Health Score</div>
+    <div
+      class="value {% if avg_health >= 75 %}c-success{% elif avg_health >= 50 %}c-warning{% else %}c-danger{% endif %}"
+      data-counter="{{ avg_health }}"
+      data-float="true"
+    >
+      {{ avg_health }}
+    </div>
+    <div class="sublabel">Completed scans</div>
+  </div>
+  {% for plan, count in plan_distribution.items() %}
+  <div class="stat-card">
+    <div class="label">{{ plan|capitalize }} Plan</div>
+    <div class="value" data-counter="{{ count }}">{{ count }}</div>
+    <div class="sublabel">users</div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="chart-grid fade-in-up delay-1">
+  <div class="chart-box">
+    <div class="card-title">Scans Per Day (30d)</div>
+    <canvas id="scansChart"></canvas>
+  </div>
+  <div class="chart-box">
+    <div class="card-title">Plan Distribution</div>
+    <canvas id="planChart"></canvas>
+  </div>
+</div>
+
+<div
+  class="card card-accent fade-in-up delay-2"
+  style="padding: 0; overflow: hidden"
+>
+  <div
+    style="
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    "
+  >
+    <span class="card-title" style="margin-bottom: 0">Recent Activity</span>
+    <a href="/admin/activity" class="btn btn-outline btn-sm">View All →</a>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>User</th>
+        <th>Action</th>
+        <th>IP</th>
+        <th>Details</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in recent_activity %}
+      <tr>
+        <td
+          style="
+            font-family: var(--font-code);
+            font-size: 11px;
+            color: var(--text-muted);
+            white-space: nowrap;
+          "
+        >
+          {{ log.created_at.strftime('%d %b %H:%M:%S') if log.created_at else
+          '—' }}
+        </td>
+        <td>
+          {% if log.user_id %}
+          <a
+            href="/admin/users/{{ log.user_id }}"
+            style="font-weight: 600; font-size: 12px"
+            >uid:{{ log.user_id }}</a
+          >
+          {% else %}
+          <span style="color: var(--text-muted)">—</span>
+          {% endif %}
+        </td>
+        <td>
+          <code
+            style="
+              font-size: 11px;
+              color: var(--primary);
+              background: rgba(99, 102, 241, 0.08);
+              padding: 3px 7px;
+              border-radius: 5px;
+            "
+            >{{ log.action }}</code
+          >
+        </td>
+        <td
+          style="
+            font-family: var(--font-code);
+            font-size: 11px;
+            color: var(--text-muted);
+          "
+        >
+          {{ log.ip_address or '—' }}
+        </td>
+        <td
+          style="
+            font-size: 11px;
+            color: var(--text-muted);
+            max-width: 240px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          "
+        >
+          {{ log.extra_data | tojson if log.extra_data else '—' }}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td
+          colspan="5"
+          style="text-align: center; color: var(--text-muted); padding: 32px"
+        >
+          <i
+            class="fa-solid fa-scroll"
+            style="
+              font-size: 20px;
+              opacity: 0.3;
+              margin-bottom: 8px;
+              display: block;
+            "
+          ></i>
+          No activity yet.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %} {% block scripts %}
+<script>
+  const LABELS = {{ daily_labels | safe }};
+  const COUNTS = {{ daily_counts | safe }};
+  const PLANS  = {{ plan_distribution | tojson }};
+
+  Chart.defaults.font.family = "'Inter', sans-serif";
+
+  const chartDefaults = {
+    responsive: true,
+    plugins: {
+      legend: { labels: { color: '#94a3b8', font: { size: 11 } } }
+    },
+  };
+
+  new Chart(document.getElementById('scansChart'), {
+    type: 'bar',
+    data: {
+      labels: LABELS,
+      datasets: [{
+        label: 'Scans',
+        data: COUNTS,
+        backgroundColor: 'rgba(99,102,241,0.5)',
+        borderColor: '#6366f1',
+        borderWidth: 1,
+        borderRadius: 5,
+      }]
+    },
+    options: {
+      ...chartDefaults,
+      scales: {
+        x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: 'rgba(226,232,240,0.8)' } },
+        y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: 'rgba(226,232,240,0.8)' }, beginAtZero: true },
+      }
+    }
+  });
+
+  new Chart(document.getElementById('planChart'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(PLANS).map(p => p.charAt(0).toUpperCase() + p.slice(1)),
+      datasets: [{
+        data: Object.values(PLANS),
+        backgroundColor: ['rgba(100,116,139,0.6)', 'rgba(99,102,241,0.6)', 'rgba(245,158,11,0.6)'],
+        borderColor: ['#cbd5e1', '#6366f1', '#f59e0b'],
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      ...chartDefaults,
+      cutout: '68%',
+    }
+  });
+</script>
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends "admin/base.html" %}
+{% block title %}All Scans{% endblock %}
+{% block page_title %}Scan Intelligence Browser{% endblock %}
+
+{% block content %}
+<form class="filter-bar fade-in-up" method="GET" action="/admin/scans">
+  <i class="fa-solid fa-magnifying-glass-chart" style="color:var(--text-muted);font-size:13px;"></i>
+  <select name="status">
+    <option value="">All Statuses</option>
+    {% for s in ['queued','running','completed','failed'] %}
+    <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s|capitalize }}</option>
+    {% endfor %}
+  </select>
+  <select name="user_id">
+    <option value="">All Users</option>
+    {% for u in all_users %}
+    <option value="{{ u.id }}" {% if user_filter == u.id|string %}selected{% endif %}>{{ u.username }}</option>
+    {% endfor %}
+  </select>
+  <input type="date" name="date" value="{{ date_filter }}" style="color-scheme:light;">
+  <button type="submit" class="btn btn-primary"><i class="fa-solid fa-magnifying-glass"></i> Filter</button>
+  {% if status_filter or user_filter or date_filter %}
+  <a href="/admin/scans" class="btn btn-outline"><i class="fa-solid fa-xmark"></i> Clear</a>
+  {% endif %}
+  <div style="flex:1;"></div>
+  <a href="/admin/export/scans" class="btn btn-outline btn-sm"><i class="fa-solid fa-download"></i> Export CSV</a>
+</form>
+
+<div class="card card-accent fade-in-up delay-1" style="padding:0;overflow:hidden;">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>User</th>
+        <th>Target URL</th>
+        <th>Status</th>
+        <th>Health</th>
+        <th>Pages</th>
+        <th>Started</th>
+        <th>Duration</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td style="font-family:var(--font-code);font-size:11px;color:var(--text-muted);">#{{ run.id }}</td>
+        <td>
+          {% if run.user_id %}
+          <a href="/admin/users/{{ run.user_id }}" style="font-weight:600;font-size:12px;">{{ user_map.get(run.user_id, 'uid:' ~ run.user_id) }}</a>
+          {% else %}<span style="color:var(--text-muted);">—</span>{% endif %}
+        </td>
+        <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          <a href="/run/{{ run.id }}" title="{{ run.target_url }}" style="font-size:12px;">{{ run.target_url }}</a>
+        </td>
+        <td><span class="badge badge-{{ run.status }}">{{ run.status }}</span></td>
+        <td>
+          {% if run.site_health_score is not none %}
+          <span class="{% if run.site_health_score >= 75 %}c-success{% elif run.site_health_score >= 50 %}c-warning{% else %}c-danger{% endif %}"
+                style="font-family:var(--font-code);font-weight:700;font-size:13px;">
+            {{ run.site_health_score | round(1) }}
+          </span>
+          {% else %}<span style="color:#cbd5e1;">—</span>{% endif %}
+        </td>
+        <td style="font-family:var(--font-code);font-size:12px;font-weight:600;">{{ run.total_tests or 0 }}</td>
+        <td style="font-size:11px;color:var(--text-muted);white-space:nowrap;font-family:var(--font-code);">
+          {{ run.started_at.strftime('%d %b %H:%M') if run.started_at else '—' }}
+        </td>
+        <td style="font-size:11px;color:var(--text-muted);font-family:var(--font-code);">
+          {% if run.started_at and run.finished_at %}
+            {% set delta = (run.finished_at - run.started_at).total_seconds() | int %}
+            {% if delta >= 60 %}{{ (delta // 60) }}m {{ delta % 60 }}s
+            {% else %}{{ delta }}s{% endif %}
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8" style="text-align:center;color:var(--text-muted);padding:56px;">
+          <i class="fa-solid fa-magnifying-glass-chart" style="font-size:28px;opacity:0.2;display:block;margin-bottom:12px;"></i>
+          <div style="font-weight:600;margin-bottom:4px;">No scans found</div>
+          <div style="font-size:12px;">Try adjusting your filters</div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pagination.pages > 1 %}
+<div class="pagination fade-in-up delay-2">
+  {% if pagination.has_prev %}
+  <a href="?page={{ pagination.prev_num }}&status={{ status_filter }}&user_id={{ user_filter }}&date={{ date_filter }}">‹ Prev</a>
+  {% endif %}
+  {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+    {% if p %}
+      {% if p == pagination.page %}<span class="current">{{ p }}</span>
+      {% else %}<a href="?page={{ p }}&status={{ status_filter }}&user_id={{ user_filter }}&date={{ date_filter }}">{{ p }}</a>{% endif %}
+    {% else %}<span style="border:none;color:var(--text-muted);">…</span>{% endif %}
+  {% endfor %}
+  {% if pagination.has_next %}
+  <a href="?page={{ pagination.next_num }}&status={{ status_filter }}&user_id={{ user_filter }}&date={{ date_filter }}">Next ›</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

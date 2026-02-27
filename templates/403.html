@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>403 — Access Denied · Guardian AI</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary:    #6366f1;
+      --secondary:  #ec4899;
+      --accent:     #8b5cf6;
+      --bg-body:    #f0f4f8;
+      --text-main:  #0f172a;
+      --text-muted: #64748b;
+      --border:     #e2e8f0;
+      --card-bg:    #ffffff;
+      --font-main:  'Inter', sans-serif;
+      --font-code:  'JetBrains Mono', monospace;
+      --shadow-lg:  0 20px 40px -5px rgba(0,0,0,0.12);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; outline: none; }
+
+    body {
+      font-family: var(--font-main);
+      background: var(--bg-body);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      background-image:
+        radial-gradient(circle at 5% 10%, rgba(99,102,241,0.07) 0%, transparent 30%),
+        radial-gradient(circle at 95% 90%, rgba(236,72,153,0.07) 0%, transparent 30%);
+    }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+
+    .container {
+      max-width: 480px;
+      padding: 48px 40px;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+      overflow: hidden;
+      animation: cardIn 0.5s ease-out both;
+    }
+
+    .container::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, var(--primary), var(--secondary));
+    }
+
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .shield-icon {
+      width: 68px; height: 68px;
+      background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(236,72,153,0.1));
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 20px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+      color: var(--primary);
+      margin: 0 auto 24px;
+      animation: shieldFloat 3s ease-in-out infinite;
+    }
+
+    @keyframes shieldFloat {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50%       { transform: translateY(-6px) rotate(2deg); }
+    }
+
+    .code-number {
+      font-size: 96px;
+      font-weight: 800;
+      line-height: 1;
+      font-family: var(--font-code);
+      background: linear-gradient(135deg, var(--primary), var(--secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+      animation: codeFloat 4s ease-in-out infinite;
+      display: block;
+    }
+
+    @keyframes codeFloat {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-4px); }
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 10px;
+      letter-spacing: -0.3px;
+    }
+
+    p {
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.6;
+      margin-bottom: 32px;
+      max-width: 340px;
+      margin-left: auto; margin-right: auto;
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 24px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px; font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+      box-shadow: 0 4px 14px rgba(99,102,241,0.3);
+      font-family: var(--font-main);
+    }
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(99,102,241,0.4);
+      text-decoration: none;
+    }
+
+    .btn-outline {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 12px 24px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      font-size: 14px; font-weight: 600;
+      text-decoration: none;
+      transition: all 0.15s ease;
+      font-family: var(--font-main);
+    }
+    .btn-outline:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: rgba(99,102,241,0.05);
+      text-decoration: none;
+    }
+
+    .meta {
+      margin-top: 28px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .meta i { color: var(--primary); font-size: 10px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="shield-icon">
+      <i class="fa-solid fa-shield-halved"></i>
+    </div>
+    <span class="code-number">403</span>
+    <h1>Access Denied</h1>
+    <p>You don't have permission to access this area. Admin privileges are required to continue.</p>
+    <div class="btn-group">
+      <a href="/" class="btn-primary">
+        <i class="fa-solid fa-house"></i> Back to App
+      </a>
+      <a href="/login" class="btn-outline">
+        <i class="fa-solid fa-right-to-bracket"></i> Login
+      </a>
+    </div>
+    <div class="meta">
+      <i class="fa-solid fa-shield-halved"></i>
+      Guardian AI · Secure Access Control
+    </div>
+  </div>
+</body>
+</html>

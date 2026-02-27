@@ -1,0 +1,230 @@
+{% extends "admin/base.html" %}
+{% block title %}User #{{ user.id }}{% endblock %}
+{% block page_title %}User — {{ user.username }}{% endblock %}
+
+{% block content %}
+<div style="display:grid;grid-template-columns:320px 1fr;gap:20px;align-items:start;">
+
+  <!-- Left Column -->
+  <div style="display:flex;flex-direction:column;gap:16px;">
+
+    <!-- Profile Card -->
+    <div class="card card-accent fade-in-up">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px;">
+        <div style="width:52px;height:52px;border-radius:var(--radius-md);
+                    background:linear-gradient(135deg,rgba(99,102,241,0.12),rgba(236,72,153,0.12));
+                    border:1px solid rgba(99,102,241,0.18);
+                    display:flex;align-items:center;justify-content:center;
+                    font-size:22px;font-weight:800;color:var(--primary);">
+          {{ user.username[0]|upper }}
+        </div>
+        <div>
+          <div style="font-size:17px;font-weight:800;color:var(--text-main);">{{ user.username }}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">{{ user.email or 'No email' }}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px;">
+        <span class="badge badge-{{ user.plan }}">{{ user.plan }}</span>
+        <span class="badge {% if user._is_active %}badge-active{% else %}badge-suspended{% endif %}">
+          {% if user._is_active %}Active{% else %}Suspended{% endif %}
+        </span>
+        {% if user.is_admin %}<span class="badge badge-admin"><i class="fa-solid fa-shield-halved" style="margin-right:3px;"></i>admin</span>{% endif %}
+      </div>
+
+      <table style="font-size:12px;width:100%;border-collapse:collapse;">
+        {% macro row(label, value) %}
+        <tr>
+          <td style="color:var(--text-muted);padding:5px 0;width:110px;font-weight:500;">{{ label }}</td>
+          <td style="color:var(--text-main);font-weight:600;font-family:var(--font-code);font-size:12px;">{{ value }}</td>
+        </tr>
+        {% endmacro %}
+        {{ row("User ID", "#" ~ user.id) }}
+        {{ row("Joined", user.created_at.strftime('%d %b %Y %H:%M') if user.created_at else '—') }}
+        {{ row("Last Login", user.last_login_at.strftime('%d %b %Y %H:%M') if user.last_login_at else 'Never') }}
+        {{ row("2FA", "Enabled" if user.is_2fa_enabled else "Disabled") }}
+        {{ row("Scan Limit", user.scan_limit) }}
+        {{ row("Page Limit", user.page_limit_default) }}
+      </table>
+    </div>
+
+    <!-- Plan Change -->
+    <div class="card fade-in-up delay-1">
+      <div class="card-title">Change Plan</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="planSelect" style="flex:1;background:#f8fafc;border:1.5px solid var(--border);
+               color:var(--text-main);padding:9px 12px;border-radius:var(--radius-sm);font-size:13px;
+               font-family:var(--font-main);transition:border-color 0.15s;">
+          {% for p in allowed_plans %}
+          <option value="{{ p }}" {% if user.plan == p %}selected{% endif %}>{{ p|capitalize }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-primary btn-sm" onclick="changePlan()">
+          <i class="fa-solid fa-check"></i> Save
+        </button>
+      </div>
+    </div>
+
+    <!-- Account Actions -->
+    <div class="card fade-in-up delay-2">
+      <div class="card-title">Account Actions</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        {% if user.id != current_user.id %}
+          {% if user._is_active %}
+          <button class="btn btn-danger" onclick="doAction('suspend', 'Suspend this user?')">
+            <i class="fa-solid fa-ban"></i> Suspend Account
+          </button>
+          {% else %}
+          <button class="btn btn-success" onclick="doAction('activate', 'Activate this user?')">
+            <i class="fa-solid fa-circle-check"></i> Activate Account
+          </button>
+          {% endif %}
+
+          {% if not user.is_admin %}
+          <button class="btn btn-outline" onclick="doAction('make-admin', 'Grant admin privileges?')">
+            <i class="fa-solid fa-shield-halved"></i> Make Admin
+          </button>
+          {% else %}
+          <button class="btn btn-danger" onclick="doAction('remove-admin', 'Remove admin privileges?')">
+            <i class="fa-solid fa-shield-xmark"></i> Remove Admin
+          </button>
+          {% endif %}
+        {% else %}
+          <div style="color:var(--text-muted);font-size:12px;padding:4px 0;">
+            <i class="fa-solid fa-circle-info" style="margin-right:6px;"></i>
+            You cannot modify your own account.
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right Column -->
+  <div style="display:flex;flex-direction:column;gap:16px;">
+
+    <!-- Stats -->
+    <div class="stat-grid fade-in-up" style="margin-bottom:0;">
+      <div class="stat-card">
+        <div class="label">Total Scans</div>
+        <div class="value c-primary" data-counter="{{ scan_count }}">{{ scan_count }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Pages Scanned</div>
+        <div class="value" data-counter="{{ total_pages_scanned }}">{{ total_pages_scanned }}</div>
+      </div>
+      <div class="stat-card">
+        <div class="label">Avg Health</div>
+        <div class="value {% if avg_health and avg_health >= 75 %}c-success{% elif avg_health and avg_health >= 50 %}c-warning{% elif avg_health %}c-danger{% endif %}"
+             {% if avg_health %}data-counter="{{ avg_health }}" data-float="true"{% endif %}>
+          {{ avg_health or '—' }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Scan History -->
+    <div class="card card-accent fade-in-up delay-1" style="padding:0;overflow:hidden;">
+      <div style="padding:16px 22px;border-bottom:1px solid var(--border);">
+        <span class="card-title" style="margin-bottom:0;">Scan History</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>ID</th><th>URL</th><th>Status</th><th>Health</th><th>Started</th></tr>
+        </thead>
+        <tbody>
+          {% for run in recent_scans %}
+          <tr>
+            <td style="font-family:var(--font-code);font-size:11px;color:var(--text-muted);">#{{ run.id }}</td>
+            <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+              <a href="/run/{{ run.id }}" style="font-size:12px;">{{ run.target_url }}</a>
+            </td>
+            <td><span class="badge badge-{{ run.status }}">{{ run.status }}</span></td>
+            <td>
+              {% if run.site_health_score is not none %}
+                <span class="{% if run.site_health_score >= 75 %}c-success{% elif run.site_health_score >= 50 %}c-warning{% else %}c-danger{% endif %}"
+                      style="font-family:var(--font-code);font-weight:700;font-size:13px;">
+                  {{ run.site_health_score | round(1) }}
+                </span>
+              {% else %}—{% endif %}
+            </td>
+            <td style="font-size:11px;color:var(--text-muted);font-family:var(--font-code);">
+              {{ run.started_at.strftime('%d %b %H:%M') if run.started_at else '—' }}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" style="text-align:center;color:var(--text-muted);padding:24px;">
+              No scans yet.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Audit Log -->
+    <div class="card card-accent fade-in-up delay-2" style="padding:0;overflow:hidden;">
+      <div style="padding:16px 22px;border-bottom:1px solid var(--border);">
+        <span class="card-title" style="margin-bottom:0;">Audit Trail <span style="font-weight:400;opacity:0.6;">(last 50)</span></span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>Time</th><th>Action</th><th>IP</th><th>Details</th></tr>
+        </thead>
+        <tbody>
+          {% for log in user_logs %}
+          <tr>
+            <td style="font-family:var(--font-code);font-size:11px;color:var(--text-muted);white-space:nowrap;">
+              {{ log.created_at.strftime('%d %b %H:%M:%S') if log.created_at else '—' }}
+            </td>
+            <td>
+              <code style="font-size:11px;color:var(--primary);background:rgba(99,102,241,0.08);padding:3px 7px;border-radius:5px;font-family:var(--font-code);">{{ log.action }}</code>
+            </td>
+            <td style="font-size:11px;color:var(--text-muted);font-family:var(--font-code);">{{ log.ip_address or '—' }}</td>
+            <td style="font-size:11px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-code);">
+              {{ log.extra_data | tojson if log.extra_data else '' }}
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">No audit records.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const UID = {{ user.id }};
+
+function doAction(action, confirmMsg) {
+  if (!confirm(confirmMsg)) return;
+  adminPost(`/admin/users/${UID}/${action}`, {}, d => {
+    showToast('Done', 'ok');
+    setTimeout(() => location.reload(), 700);
+  });
+}
+
+function changePlan() {
+  const plan = document.getElementById('planSelect').value;
+  const fd = new FormData();
+  fd.append('plan', plan);
+  const csrf = document.querySelector('meta[name="csrf-token"]');
+  fetch(`/admin/users/${UID}/change-plan`, {
+    method: 'POST', body: fd,
+    headers: csrf ? {'X-CSRFToken': csrf.content} : {}
+  })
+  .then(r => r.json())
+  .then(d => {
+    if (d.error) { showToast(d.error, 'err'); return; }
+    showToast(`Plan updated to ${d.plan}`, 'ok');
+  })
+  .catch(() => showToast('Failed', 'err'));
+}
+</script>
+{% endblock %}

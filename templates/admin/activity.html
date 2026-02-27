@@ -1,0 +1,97 @@
+{% extends "admin/base.html" %}
+{% block title %}Activity Log{% endblock %}
+{% block page_title %}Activity Log{% endblock %}
+
+{% block content %}
+<form class="filter-bar fade-in-up" method="GET" action="/admin/activity">
+  <i class="fa-solid fa-filter" style="color:var(--text-muted);font-size:13px;"></i>
+  <select name="user_id">
+    <option value="">All Users</option>
+    {% for u in all_users %}
+    <option value="{{ u.id }}" {% if user_filter == u.id|string %}selected{% endif %}>{{ u.username }}</option>
+    {% endfor %}
+  </select>
+  <select name="action">
+    <option value="">All Actions</option>
+    {% for a in action_types %}
+    <option value="{{ a }}" {% if action_filter == a %}selected{% endif %}>{{ a }}</option>
+    {% endfor %}
+  </select>
+  <input type="date" name="date" value="{{ date_filter }}" style="color-scheme:light;">
+  <button type="submit" class="btn btn-primary"><i class="fa-solid fa-magnifying-glass"></i> Filter</button>
+  {% if user_filter or action_filter or date_filter %}
+  <a href="/admin/activity" class="btn btn-outline"><i class="fa-solid fa-xmark"></i> Clear</a>
+  {% endif %}
+  <div style="flex:1;"></div>
+  <span style="font-size:12px;color:var(--text-muted);">Forensic timeline</span>
+</form>
+
+<div class="card card-accent fade-in-up delay-1" style="padding:0;overflow:hidden;">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Time</th>
+        <th>User</th>
+        <th>Action</th>
+        <th>IP Address</th>
+        <th>Metadata</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      <tr>
+        <td style="font-family:var(--font-code);font-size:11px;color:var(--text-muted);white-space:nowrap;">
+          {{ log.created_at.strftime('%d %b %Y %H:%M:%S') if log.created_at else '—' }}
+        </td>
+        <td>
+          {% if log.user_id %}
+          <a href="/admin/users/{{ log.user_id }}" style="font-weight:600;">
+            {{ user_map.get(log.user_id, 'uid:' ~ log.user_id) }}
+          </a>
+          {% else %}
+          <span style="color:var(--text-muted);font-style:italic;font-size:12px;">anonymous</span>
+          {% endif %}
+        </td>
+        <td>
+          <code style="font-size:11px;background:rgba(99,102,241,0.08);color:var(--primary);padding:3px 8px;border-radius:5px;font-family:var(--font-code);">{{ log.action }}</code>
+        </td>
+        <td style="font-family:var(--font-code);font-size:11px;color:var(--text-muted);">{{ log.ip_address or '—' }}</td>
+        <td style="font-size:11px;color:var(--text-muted);max-width:300px;">
+          {% if log.extra_data %}
+          <div class="metadata-cell" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;font-family:var(--font-code);"
+               title="{{ log.extra_data | tojson }}"
+               onclick="this.style.whiteSpace=this.style.whiteSpace==='normal'?'nowrap':'normal'">
+            {{ log.extra_data | tojson }}
+          </div>
+          {% else %}<span style="color:#cbd5e1;">—</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="5" style="text-align:center;color:var(--text-muted);padding:48px;">
+          <i class="fa-solid fa-scroll" style="font-size:24px;opacity:0.2;display:block;margin-bottom:10px;"></i>
+          No activity records found.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if pagination.pages > 1 %}
+<div class="pagination fade-in-up delay-2">
+  {% if pagination.has_prev %}
+  <a href="?page={{ pagination.prev_num }}&user_id={{ user_filter }}&action={{ action_filter }}&date={{ date_filter }}">‹ Prev</a>
+  {% endif %}
+  {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+    {% if p %}
+      {% if p == pagination.page %}<span class="current">{{ p }}</span>
+      {% else %}<a href="?page={{ p }}&user_id={{ user_filter }}&action={{ action_filter }}&date={{ date_filter }}">{{ p }}</a>{% endif %}
+    {% else %}<span style="border:none;color:var(--text-muted);">…</span>{% endif %}
+  {% endfor %}
+  {% if pagination.has_next %}
+  <a href="?page={{ pagination.next_num }}&user_id={{ user_filter }}&action={{ action_filter }}&date={{ date_filter }}">Next ›</a>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
