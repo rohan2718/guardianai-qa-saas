@@ -54,7 +54,8 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 from ai_analyzer import analyze_site
 from analytics import generate_metrics, generate_metrics_from_run
-from models import db, User, TestRun, PageResult
+from models import db, User, TestRun, PageResult, AuditLog
+from decorators import write_audit_log
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -374,29 +375,57 @@ def _delete_run(run: TestRun):
 @app.route("/register", methods=["GET", "POST"])
 @limiter.limit("20 per hour")
 def register():
+    if not config.REGISTRATION_OPEN:
+        return render_template("register.html", registration_closed=True)
+
     if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
+        username = request.form.get("username", "").strip()
+        email    = request.form.get("email", "").strip().lower() or None
+        password = request.form.get("password", "")
+
+        if not username or not password:
+            return render_template("register.html", error="Username and password are required.")
+
         if User.query.filter_by(username=username).first():
-            return render_template("register.html", error="Username already exists")
+            return render_template("register.html", error="Username already exists.")
+
+        if email and User.query.filter(
+            db.func.lower(User.email) == email
+        ).first():
+            return render_template("register.html", error="Email already registered.")
+
         user = User(
-            username=username,
-            password=generate_password_hash(password),
-            otp_secret=pyotp.random_base32(),
-            is_2fa_enabled=False,
-            plan="free",
-            scan_limit=5,
-            page_limit_default=50,
+            username           = username,
+            email              = email,
+            password           = generate_password_hash(password),
+            otp_secret         = pyotp.random_base32(),
+            is_2fa_enabled     = False,
+            plan               = "free",
+            scan_limit         = 5,
+            page_limit_default = 50,
+            is_admin           = False,
         )
+        user._is_active = True
         db.session.add(user)
         db.session.commit()
+
+        write_audit_log(
+            db, AuditLog,
+            user_id  = user.id,
+            action   = "register",
+            extra_data = {"username": username, "email": email},
+        )
+
         return redirect("/login")
+
     return render_template("register.html")
 
 
 @app.route("/login", methods=["GET", "POST"])
-@limiter.limit("20 per minute")   # Brute-force protection
+@limiter.limit("20 per minute")
 def login():
+    reset_success = request.args.get("reset_success")
+
     # ── 2FA verification flow ────────────────────────────────────────────────
     if session.get("2fa_user_id"):
         user_id = session["2fa_user_id"]
@@ -411,12 +440,25 @@ def login():
             otp = request.form.get("otp", "")
             if otp and totp.verify(otp):
                 user.is_2fa_enabled = True
+                user.last_login_at  = datetime.now(UTC)
                 db.session.commit()
                 login_user(user)
                 session.pop("2fa_user_id", None)
                 _delete_qr(user_id)
+                write_audit_log(
+                    db, AuditLog,
+                    user_id  = user.id,
+                    action   = "login_2fa_success",
+                    extra_data = {"username": user.username},
+                )
                 return redirect("/")
-            # Invalid OTP — still show QR if first-time setup
+
+            write_audit_log(
+                db, AuditLog,
+                user_id  = user_id,
+                action   = "login_2fa_failed",
+                extra_data = {"username": user.username if user else "unknown"},
+            )
             qr = _get_qr(user_id)
             return render_template("login.html", show_otp=True, qr=qr, error="Invalid OTP")
 
@@ -429,17 +471,31 @@ def login():
         password = request.form.get("password", "")
         user     = User.query.filter_by(username=username).first()
 
+        if user and not user._is_active:
+            write_audit_log(
+                db, AuditLog,
+                user_id  = user.id,
+                action   = "login_suspended",
+                extra_data = {"username": username},
+            )
+            return render_template("login.html", error="Invalid credentials")
+
         if not user or not check_password_hash(user.password, password):
+            write_audit_log(
+                db, AuditLog,
+                user_id  = user.id if user else None,
+                action   = "login_failed",
+                extra_data = {"username": username},
+            )
             return render_template("login.html", error="Invalid credentials")
 
         totp = pyotp.TOTP(user.otp_secret)
         session["2fa_user_id"] = user.id
 
         if user.is_2fa_enabled:
-            # Returning user — just ask for OTP (no QR)
             return render_template("login.html", show_otp=True)
 
-        # First-time 2FA setup — generate QR, store in Redis (NOT session cookie)
+        # First-time 2FA setup — generate QR, store in Redis
         uri = totp.provisioning_uri(name=user.username, issuer_name="GuardianAI")
         img = qrcode.make(uri)
         buffer = BytesIO()
@@ -449,8 +505,7 @@ def login():
 
         return render_template("login.html", show_otp=True, qr=qr_base64)
 
-    return render_template("login.html")
-
+    return render_template("login.html", reset_success=reset_success)
 
 @app.route("/logout")
 @login_required
@@ -1127,6 +1182,19 @@ def serve_screenshot(filename):
     # login_required prevents unauthenticated access to screenshots
     return send_from_directory(SCREENSHOT_DIR, filename)
 
+
+
+# ── Admin + Password Reset Blueprints ─────────────────────────────────────────
+
+@app.errorhandler(403)
+def forbidden(e):
+    return render_template("403.html"), 403
+
+from admin import admin_bp
+app.register_blueprint(admin_bp)
+
+from password_reset import reset_bp
+app.register_blueprint(reset_bp)
 
 # ════════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT

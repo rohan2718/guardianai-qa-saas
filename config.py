@@ -86,3 +86,12 @@ PLAN_LIMITS: dict[str, dict] = {
         "history_days": 365,
     },
 }
+# ── Registration Gate ─────────────────────────────────────────────────────────
+REGISTRATION_OPEN = os.environ.get("REGISTRATION_OPEN", "true").lower() == "true"
+
+# ── SMTP (password reset emails) ─────────────────────────────────────────────
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", os.environ.get("SMTP_USER", ""))
