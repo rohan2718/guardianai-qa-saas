@@ -209,13 +209,105 @@ async def capture_dom_elements(page) -> dict:
                 text: (el.innerText || el.value || '').substring(0, 80),
                 visible: el.offsetParent !== null,
             }));
-            const forms = [...document.querySelectorAll('form')].map(f => ({
-                id: f.id || null, action: f.action || null, method: f.method || 'get',
-                inputs: [...f.querySelectorAll('input,select,textarea')].map(i => ({
-                    type: i.type || 'text', name: i.name || null,
-                    required: i.required, has_label: !!document.querySelector(`label[for="${i.id}"]`) || !!i.closest('label'),
-                }))
-            }));
+             const forms = [...document.querySelectorAll('form')]
+                .map(f => {
+                    // ── All fields including hidden (for analysis), visible fields for display
+                    const allInputs = [...f.querySelectorAll('input, select, textarea, button')];
+
+                    // Visible fields only — skip type=hidden entirely for display
+                    const fields = allInputs
+                        .filter(i => i.type !== 'hidden')
+                        .map(i => {
+                            const tag        = i.tagName.toLowerCase();
+                            const inputType  = i.getAttribute('type') || (tag === 'select' ? 'select' : tag === 'textarea' ? 'textarea' : 'text');
+                            const inputId    = i.id || null;
+
+                            // Resolve label text — try label[for=id], then closest label, then aria-label
+                            let labelText = null;
+                            if (inputId) {
+                                const lbl = document.querySelector(`label[for="${inputId}"]`);
+                                if (lbl) labelText = lbl.innerText.trim().substring(0, 80);
+                            }
+                            if (!labelText) {
+                                const parentLabel = i.closest('label');
+                                if (parentLabel) labelText = parentLabel.innerText.trim().substring(0, 80);
+                            }
+                            if (!labelText) {
+                                labelText = i.getAttribute('aria-label') || i.getAttribute('title') || null;
+                            }
+
+                            // Resolve display name: label → placeholder → name → id → type
+                            const displayName = labelText
+                                || i.getAttribute('placeholder')
+                                || i.getAttribute('name')
+                                || inputId
+                                || inputType;
+
+                            return {
+                                tag:          tag,
+                                type:         inputType,
+                                name:         i.getAttribute('name') || null,
+                                id:           inputId,
+                                label:        labelText,
+                                display_name: displayName ? displayName.substring(0, 60) : null,
+                                placeholder:  i.getAttribute('placeholder') || null,
+                                required:     i.required || i.getAttribute('aria-required') === 'true',
+                                has_label:    !!labelText,
+                                maxlength:    i.getAttribute('maxlength') || null,
+                                pattern:      i.getAttribute('pattern') || null,
+                                autocomplete: i.getAttribute('autocomplete') || null,
+                                readonly:     i.readOnly || false,
+                                disabled:     i.disabled || false,
+                                // For select: collect options
+                                options: tag === 'select'
+                                    ? [...i.querySelectorAll('option')]
+                                        .filter(o => o.value)
+                                        .slice(0, 10)
+                                        .map(o => ({ value: o.value, text: o.innerText.trim().substring(0, 40) }))
+                                    : null,
+                            };
+                        });
+
+                    const visibleFields = fields.filter(f =>
+                        !['submit', 'button', 'reset', 'image'].includes(f.type)
+                    );
+                    const submitBtn = fields.find(f =>
+                        ['submit', 'button'].includes(f.type) || f.tag === 'button'
+                    );
+
+                    // Strip fragment from action for cleaner display
+                    let actionUrl = f.action || null;
+                    if (actionUrl) {
+                        try { actionUrl = new URL(actionUrl).href; } catch(e) {}
+                    }
+
+                    return {
+                        id:                f.id     || null,
+                        action:            actionUrl,
+                        method:            (f.getAttribute('method') || 'get').toUpperCase(),
+                        enctype:           f.getAttribute('enctype') || null,
+                        name:              f.getAttribute('name') || null,
+                        // "fields" key — matches what form_analyzer.py reads
+                        fields:            fields,
+                        fields_count:      visibleFields.length,
+                        has_submit:        !!submitBtn,
+                        submit_label:      submitBtn ? (submitBtn.display_name || submitBtn.placeholder || 'Submit') : null,
+                        // Quick-purpose guess from field names
+                        form_purpose:      (() => {
+                            const names = fields.map(f => (f.name || '').toLowerCase()).join(' ');
+                            if (/login|signin|password|username/.test(names)) return 'Login';
+                            if (/register|signup|create.*account/.test(names)) return 'Registration';
+                            if (/search|query|q\b/.test(names)) return 'Search';
+                            if (/contact|message|enqui/.test(names)) return 'Contact';
+                            if (/subscribe|newsletter|email/.test(names)) return 'Newsletter';
+                            if (/checkout|payment|card|billing/.test(names)) return 'Checkout';
+                            if (/comment|reply|feedback/.test(names)) return 'Feedback';
+                            return null;
+                        })(),
+                    };
+                })
+                // Filter out forms with zero visible fields (hidden-only forms)
+                .filter(f => f.fields_count > 0 || f.has_submit);
             const nav_menus    = [...document.querySelectorAll('nav, [role="navigation"]')].map(n => ({id: n.id || null, items: n.querySelectorAll('a').length}));
             const dropdowns    = [...document.querySelectorAll('select, [role="listbox"], .dropdown')].map(d => ({id: d.id || null}));
             const tabs         = [...document.querySelectorAll('[role="tab"], .tab')].map(t => ({text: (t.innerText || '').substring(0, 60)}));

@@ -2640,57 +2640,305 @@
                   </tbody>
                 </table>
               </div>
-
-              <div
+<div
                 id="tab-content-forms-{{ loop.index0 }}"
                 class="tab-pane"
-                style="padding: 18px"
+                style="padding: 18px; background: #f8fafc;"
               >
-                {% if item.forms and item.forms|length > 0 %} {% for form in
-                item.forms %}
-                <div
-                  style="
-                    margin-bottom: 14px;
-                    border: 1px solid var(--border);
-                    padding: 12px;
-                    border-radius: var(--radius-sm);
-                  "
-                >
-                  <div style="font-size: 13px; margin-bottom: 4px">
-                    Method: {{ form.method }} · Fields: {{ form.fields_count }}
-                  </div>
-                  <div
-                    style="
+                {% set visible_forms = [] %}
+                {% for form in (item.forms or []) %}
+                  {% set vf = form.fields | selectattr("type", "ne", "hidden") | list if form.fields else [] %}
+                  {% if vf | length > 0 or form.has_submit %}
+                    {% if visible_forms.append(form) %}{% endif %}
+                  {% endif %}
+                {% endfor %}
+
+                {% if visible_forms | length > 0 %}
+                  {% for form in visible_forms %}
+                  <div style="
+                    margin-bottom: 20px;
+                    background: #fff;
+                    border: 1px solid #e2e8f0;
+                    border-radius: 12px;
+                    overflow: hidden;
+                    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+                  ">
+                    <!-- Form header bar -->
+                    <div style="
+                      padding: 10px 16px;
+                      background: #f1f5f9;
+                      border-bottom: 1px solid #e2e8f0;
+                      display: flex;
+                      align-items: center;
+                      justify-content: space-between;
+                      flex-wrap: wrap;
+                      gap: 6px;
+                    ">
+                      <div style="display:flex; align-items:center; gap:8px;">
+                        <i class="fa-solid fa-wpforms" style="color:#6366f1; font-size:13px;"></i>
+                        <span style="font-size:12px; font-weight:600; color:#1e293b;">
+                          {% if form.form_purpose %}{{ form.form_purpose }} Form{% else %}Form{% endif %}
+                          {% if form.name %}<span style="color:#94a3b8; font-weight:400;"> · {{ form.name }}</span>{% endif %}
+                        </span>
+                      </div>
+                      <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <!-- METHOD badge -->
+                        <span style="
+                          font-size: 10px; font-weight: 700; padding: 2px 8px;
+                          border-radius: 20px; letter-spacing: 0.5px;
+                          background: {% if form.method == 'POST' %}#dbeafe{% else %}#dcfce7{% endif %};
+                          color: {% if form.method == 'POST' %}#1d4ed8{% else %}#166534{% endif %};
+                        ">{{ form.method or 'GET' }}</span>
+                        <!-- Field count badge -->
+                        <span style="font-size:10px; padding:2px 8px; border-radius:20px; background:#f1f5f9; color:#64748b;">
+                          {{ form.fields_count or 0 }} field{{ 's' if (form.fields_count or 0) != 1 else '' }}
+                        </span>
+                        <!-- Submit badge -->
+                        {% if form.has_submit %}
+                        <span style="font-size:10px; padding:2px 8px; border-radius:20px; background:#dcfce7; color:#166534;">
+                          <i class="fa-solid fa-check" style="font-size:9px;"></i> Has Submit
+                        </span>
+                        {% else %}
+                        <span style="font-size:10px; padding:2px 8px; border-radius:20px; background:#fef9c3; color:#854d0e;">
+                          <i class="fa-solid fa-triangle-exclamation" style="font-size:9px;"></i> No Submit
+                        </span>
+                        {% endif %}
+                      </div>
+                    </div>
+
+                    <!-- Action URL -->
+                    {% if form.action %}
+                    <div style="
+                      padding: 7px 16px;
                       font-size: 11px;
-                      color: var(--text-muted);
-                      margin-bottom: 8px;
+                      color: #64748b;
+                      background: #fafafa;
+                      border-bottom: 1px solid #f1f5f9;
                       word-break: break-all;
-                    "
-                  >
-                    Action: {{ form.action }}
+                      font-family: var(--font-code, monospace);
+                    ">
+                      <span style="color:#94a3b8; margin-right:4px;">ACTION</span>{{ form.action }}
+                    </div>
+                    {% endif %}
+
+                    <!-- Visual form fields -->
+                    <div style="padding: 16px 16px 8px;">
+                      {% set visible_fields = [] %}
+                      {% for field in (form.fields or []) %}
+                        {% if field.type not in ['hidden', 'submit', 'button', 'reset', 'image'] %}
+                          {% if visible_fields.append(field) %}{% endif %}
+                        {% endif %}
+                      {% endfor %}
+
+                      {% for field in visible_fields %}
+                      <div style="margin-bottom: 14px;">
+                        <!-- Label row -->
+                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:5px;">
+                          <label style="
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: #374151;
+                          ">
+                            {{ field.label or field.display_name or field.name or field.type or 'Field' }}
+                          </label>
+                          {% if field.required %}
+                          <span style="color:#ef4444; font-size:13px; line-height:1;" title="Required">*</span>
+                          {% endif %}
+                          <!-- Type badge -->
+                          <span style="
+                            font-size: 9px; padding: 1px 6px; border-radius: 10px;
+                            background: #ede9fe; color: #6d28d9; font-weight: 600;
+                            text-transform: uppercase; letter-spacing: 0.3px;
+                          ">{{ field.type }}</span>
+                          {% if not field.has_label %}
+                          <span style="font-size:9px; padding:1px 5px; border-radius:10px; background:#fef3c7; color:#92400e;" title="No label element found">no label</span>
+                          {% endif %}
+                          {% if field.readonly %}
+                          <span style="font-size:9px; padding:1px 5px; border-radius:10px; background:#f1f5f9; color:#64748b;">readonly</span>
+                          {% endif %}
+                          {% if field.disabled %}
+                          <span style="font-size:9px; padding:1px 5px; border-radius:10px; background:#f1f5f9; color:#94a3b8;">disabled</span>
+                          {% endif %}
+                        </div>
+
+                        <!-- Visual input element -->
+                        {% if field.type == 'textarea' %}
+                        <textarea
+                          placeholder="{{ field.placeholder or '' }}"
+                          style="
+                            width: 100%; box-sizing: border-box;
+                            padding: 8px 10px; border: 1.5px solid #d1d5db;
+                            border-radius: 7px; font-size: 12px; color: #374151;
+                            background: {% if field.disabled %}#f9fafb{% else %}#fff{% endif %};
+                            resize: vertical; min-height: 64px;
+                            font-family: inherit; pointer-events: none;
+                          "
+                          disabled
+                        ></textarea>
+
+                        {% elif field.type == 'select' %}
+                        <select disabled style="
+                          width: 100%; box-sizing: border-box;
+                          padding: 8px 10px; border: 1.5px solid #d1d5db;
+                          border-radius: 7px; font-size: 12px; color: #374151;
+                          background: #fff; pointer-events: none;
+                          appearance: auto;
+                        ">
+                          {% if field.placeholder %}<option value="">{{ field.placeholder }}</option>{% endif %}
+                          {% for opt in (field.options or [])[:6] %}
+                          <option>{{ opt.text or opt.value }}</option>
+                          {% endfor %}
+                          {% if (field.options or []) | length > 6 %}
+                          <option disabled>… {{ (field.options | length) - 6 }} more options</option>
+                          {% endif %}
+                        </select>
+
+                        {% elif field.type in ['checkbox', 'radio'] %}
+                        <div style="display:flex; align-items:center; gap:8px; padding: 4px 0;">
+                          <input
+                            type="{{ field.type }}"
+                            disabled
+                            style="width:16px; height:16px; accent-color:#6366f1;"
+                          />
+                          <span style="font-size:12px; color:#64748b;">
+                            {{ field.placeholder or field.display_name or field.name or '' }}
+                          </span>
+                        </div>
+
+                        {% elif field.type == 'range' %}
+                        <input
+                          type="range" disabled
+                          style="width:100%; accent-color:#6366f1; pointer-events:none;"
+                        />
+
+                        {% elif field.type == 'color' %}
+                        <input
+                          type="color" disabled value="#6366f1"
+                          style="height:32px; width:48px; border:none; cursor:default;"
+                        />
+
+                        {% else %}
+                        <!-- text, email, tel, number, password, url, date, search, etc. -->
+                        <div style="position:relative;">
+                          <input
+                            type="{{ 'text' if field.type == 'password' else field.type }}"
+                            placeholder="{{ field.placeholder or '' }}"
+                            value="{% if field.type == 'password' %}••••••••{% endif %}"
+                            disabled
+                            style="
+                              width: 100%; box-sizing: border-box;
+                              padding: 8px {% if field.type == 'password' %}36px{% else %}10px{% endif %} 8px 10px;
+                              border: 1.5px solid {% if field.required and not field.has_label %}#fca5a5{% else %}#d1d5db{% endif %};
+                              border-radius: 7px; font-size: 12px; color: #374151;
+                              background: {% if field.disabled %}#f9fafb{% elif field.readonly %}#f1f5f9{% else %}#fff{% endif %};
+                              pointer-events: none;
+                            "
+                          />
+                          {% if field.type == 'password' %}
+                          <i class="fa-solid fa-lock" style="
+                            position:absolute; right:10px; top:50%; transform:translateY(-50%);
+                            color:#94a3b8; font-size:11px;
+                          "></i>
+                          {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <!-- Validation hints row -->
+                        {% if field.maxlength or field.pattern or field.autocomplete %}
+                        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:4px;">
+                          {% if field.maxlength %}
+                          <span style="font-size:10px; color:#64748b;">max {{ field.maxlength }} chars</span>
+                          {% endif %}
+                          {% if field.pattern %}
+                          <span style="font-size:10px; color:#6366f1; font-family:monospace;">pattern: {{ field.pattern[:30] }}</span>
+                          {% endif %}
+                          {% if field.autocomplete and field.autocomplete != 'on' %}
+                          <span style="font-size:10px; color:#64748b;">autocomplete: {{ field.autocomplete }}</span>
+                          {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <!-- name attr hint -->
+                        {% if field.name %}
+                        <div style="font-size:10px; color:#94a3b8; margin-top:2px; font-family: monospace;">
+                          name="{{ field.name }}"{% if field.id %} · id="{{ field.id }}"{% endif %}
+                        </div>
+                        {% endif %}
+                      </div>
+                      {% endfor %}
+
+                      <!-- Submit button visual -->
+                      {% set submit_field = form.fields | selectattr("type", "in", ["submit","button"]) | first if form.fields else none %}
+                      {% if form.has_submit %}
+                      <button disabled style="
+                        margin-top: 6px;
+                        padding: 9px 22px;
+                        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+                        color: #fff;
+                        border: none;
+                        border-radius: 8px;
+                        font-size: 13px;
+                        font-weight: 600;
+                        cursor: default;
+                        opacity: 0.85;
+                      ">
+                        <i class="fa-solid fa-paper-plane" style="margin-right:6px; font-size:11px;"></i>
+                        {{ form.submit_label or 'Submit' }}
+                      </button>
+                      {% endif %}
+                    </div>
+
+                    <!-- Form health score bar (if available) -->
+                    {% if form.form_health_score is not none %}
+                    <div style="
+                      padding: 8px 16px;
+                      border-top: 1px solid #f1f5f9;
+                      display:flex; align-items:center; gap:10px;
+                      background: #fafafa;
+                    ">
+                      <span style="font-size:11px; color:#64748b; white-space:nowrap;">Form Health</span>
+                      <div style="flex:1; height:5px; background:#e2e8f0; border-radius:10px; overflow:hidden;">
+                        <div style="
+                          height:100%; border-radius:10px;
+                          width: {{ form.form_health_score }}%;
+                          background: {% if form.form_health_score >= 80 %}#22c55e{% elif form.form_health_score >= 50 %}#f59e0b{% else %}#ef4444{% endif %};
+                          transition: width 0.4s ease;
+                        "></div>
+                      </div>
+                      <span style="
+                        font-size:11px; font-weight:700;
+                        color: {% if form.form_health_score >= 80 %}#22c55e{% elif form.form_health_score >= 50 %}#f59e0b{% else %}#ef4444{% endif %};
+                        min-width: 32px; text-align:right;
+                      ">{{ form.form_health_score | int }}%</span>
+                    </div>
+                    {% endif %}
+
+                    <!-- Form issues -->
+                    {% if form.form_issues and form.form_issues | length > 0 %}
+                    <div style="padding: 0 16px 12px;">
+                      {% for issue in form.form_issues %}
+                      <div style="
+                        display:flex; align-items:flex-start; gap:8px;
+                        padding: 6px 0; border-top: 1px dashed #f1f5f9; font-size:11px;
+                      ">
+                        <i class="fa-solid {% if issue.severity == 'high' %}fa-circle-xmark{% elif issue.severity == 'medium' %}fa-triangle-exclamation{% else %}fa-circle-info{% endif %}"
+                          style="color:{% if issue.severity == 'high' %}#ef4444{% elif issue.severity == 'medium' %}#f59e0b{% else %}#6366f1{% endif %};
+                          margin-top:1px; flex-shrink:0; font-size:12px;">
+                        </i>
+                        <span style="color:#475569;">{{ issue.detail }}</span>
+                      </div>
+                      {% endfor %}
+                    </div>
+                    {% endif %}
+
                   </div>
-                  <ul
-                    style="
-                      font-size: 12px;
-                      padding-left: 18px;
-                      margin: 0;
-                      line-height: 1.7;
-                    "
-                  >
-                    {% for field in form.fields %}
-                    <li>
-                      {{ field.tag }} | {{ field.type }} | {{ field.name }} {%
-                      if field.required %}<strong style="color: var(--danger)"
-                        >(req)</strong
-                      >{% endif %}
-                    </li>
-                    {% endfor %}
-                  </ul>
+                  {% endfor %}
+
+                {% else %}
+                <div style="text-align:center; padding:32px 0; color:#94a3b8;">
+                  <i class="fa-solid fa-wpforms" style="font-size:28px; opacity:0.3; display:block; margin-bottom:10px;"></i>
+                  <span style="font-size:13px;">No visible forms detected on this page.</span>
                 </div>
-                {% endfor %} {% else %}
-                <p style="color: #94a3b8; font-size: 13px">
-                  No forms detected.
-                </p>
                 {% endif %}
               </div>
 

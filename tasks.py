@@ -64,13 +64,17 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
 
     try:
         from crawler import main as run_crawler
-        result = asyncio.run(
-            run_crawler(
-                run_id, url, user_id, page_limit,
-                update_fn=update_progress,
-                active_filters=active_filters,
+        from app import _release_scan_slot
+        try :
+            result = asyncio.run(
+                run_crawler(
+                    run_id, url, user_id, page_limit,
+                    update_fn=update_progress,
+                    active_filters=active_filters,
+                )
             )
-        )
+        finally:
+            _release_scan_slot()
     except Exception as e:
         logger.error(f"Crawler failed for run {run_id}: {e}", exc_info=True)
         with app.app_context():
@@ -84,21 +88,24 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
     # ── Persist results ────────────────────────────────────────────────────────
 
     try:
+        import os as _os
+        import markdown as _markdown
+
         site_health    = result.get("site_health")    or {}
-        component_avgs = site_health.get("component_averages") or {}
+        component_avgs = site_health.get("component_averages") or {}   # ← populated after FIX1
         score_dist     = site_health.get("score_distribution") or {}
 
-        total_a11y    = 0
-        total_broken  = 0
-        total_js_err  = 0
-        slow_pages    = 0
+        # ── Accumulate aggregate counters from raw page data ─────────────────
+        total_a11y   = 0
+        total_broken = 0
+        total_js_err = 0
+        slow_pages   = 0
 
         raw_file = result.get("raw_file")
         pages: list = []
         if raw_file:
             try:
-                import os
-                if os.path.exists(raw_file):
+                if _os.path.exists(raw_file):
                     with open(raw_file, "r", encoding="utf-8") as fh:
                         pages = json.load(fh)
             except Exception as e:
@@ -106,28 +113,41 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
 
         for p in pages:
             total_a11y   += p.get("accessibility_issues") or 0
-            total_broken += len(p.get("broken_links") or [])
-            total_js_err += len(p.get("js_errors")    or [])
+            total_broken += len(p.get("broken_navigation_links") or [])   # ← FIX3
+            total_js_err += len(p.get("js_errors") or [])
             lt = p.get("load_time") or 0
             if lt > 3:
                 slow_pages += 1
 
+        # ── Read AI summary text from file ───────────────────────────────────
+        ai_summary_text = None
+        ai_summary_html = None
+        summary_file_path = result.get("summary_file")
+        if summary_file_path and _os.path.exists(summary_file_path):
+            try:
+                with open(summary_file_path, "r", encoding="utf-8") as fh:
+                    ai_summary_text = fh.read()
+                if ai_summary_text:
+                    ai_summary_html = _markdown.markdown(ai_summary_text)
+            except Exception as e:
+                logger.warning(f"Could not read AI summary file for run {run_id}: {e}")
+
+        # ── ATOMIC COMMIT: TestRun + PageResult in one transaction ────────────
         with app.app_context():
             run = db.session.get(TestRun, run_id)
             if not run:
                 logger.error(f"TestRun {run_id} disappeared before final persist")
                 return
 
-            run.status      = "completed"
-            run.finished_at = datetime.now(UTC)
-            run.total_tests = result.get("total", 0)
-            run.passed      = result.get("passed", 0)
-            run.failed      = result.get("failed", 0)
+            # Populate aggregate fields
+            run.total_tests   = result.get("total", 0)
+            run.passed        = result.get("passed", 0)
+            run.failed        = result.get("failed", 0)
             run.scanned_pages = result.get("scanned_pages", 0)
-            run.progress    = 100
+            run.progress      = 100
 
             run.report_file       = result.get("report_file")
-            run.summary_file      = result.get("summary_file")
+            run.summary_file      = summary_file_path
             run.raw_file          = result.get("raw_file")
             run.site_summary_file = result.get("site_summary_file")
 
@@ -135,6 +155,7 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             run.risk_category     = site_health.get("risk_category")
             run.confidence_score  = result.get("confidence_score")
 
+            # Component averages — populated after FIX1 adds component_averages key
             run.avg_performance_score   = component_avgs.get("performance")
             run.avg_accessibility_score = component_avgs.get("accessibility")
             run.avg_security_score      = component_avgs.get("security")
@@ -151,10 +172,86 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             run.needs_attention_pages = score_dist.get("Needs Attention", 0)
             run.critical_pages        = score_dist.get("Critical",        0)
 
-            db.session.commit()
-            run_id_final = run.id
+            # AI summary stored in DB — survives server restarts / lost files
+            run.ai_summary      = ai_summary_text   # ← FIX4
+            run.ai_summary_html = ai_summary_html   # ← FIX4
 
-        _persist_page_results(run_id_final, pages)
+            # Build PageResult objects in-session before any commit
+            try:
+                existing_patterns: dict = {}
+                from sqlalchemy import text as _text
+                rows = db.session.execute(
+                    _text(
+                        "SELECT DISTINCT ON (failure_pattern_id) failure_pattern_id, id "
+                        "FROM page_results "
+                        "WHERE run_id != :run_id AND failure_pattern_id IS NOT NULL "
+                        "ORDER BY failure_pattern_id, id DESC "
+                        "LIMIT 500"
+                    ),
+                    {"run_id": run_id},
+                ).fetchall()
+                existing_patterns = {row[0]: row[1] for row in rows}
+            except Exception as e:
+                logger.warning(f"Could not load prior patterns: {e}")
+                existing_patterns = {}
+
+            page_records = []
+            for p in pages:
+                try:
+                    pattern_id  = p.get("failure_pattern_id")
+                    similar_ref = existing_patterns.get(pattern_id) if pattern_id else None
+                    page_records.append(PageResult(
+                        run_id=run_id,
+                        url=p.get("url"),
+                        title=p.get("title"),
+                        scanned_at=datetime.now(UTC),
+                        status=p.get("status"),
+                        health_score=p.get("health_score"),
+                        risk_category=p.get("risk_category"),
+                        performance_score=p.get("performance_score"),
+                        accessibility_score=p.get("accessibility_score"),
+                        security_score=p.get("security_score"),
+                        functional_score=p.get("functional_score"),
+                        ui_form_score=p.get("ui_form_score"),
+                        confidence_score=p.get("confidence_score"),
+                        checks_executed=p.get("checks_executed"),
+                        checks_null=p.get("checks_null"),
+                        failure_pattern_id=pattern_id,
+                        root_cause_tag=p.get("root_cause_tag"),
+                        self_healing_suggestion=p.get("self_healing_suggestion"),
+                        similar_issue_ref=similar_ref,
+                        load_time=p.get("load_time"),
+                        fcp_ms=p.get("fcp_ms"),
+                        lcp_ms=p.get("lcp_ms"),
+                        ttfb_ms=p.get("ttfb_ms"),
+                        accessibility_issues=p.get("accessibility_issues"),
+                        broken_links_count=len(p.get("broken_navigation_links") or []),  # ← FIX3
+                        js_errors_count=len(p.get("js_errors") or []),
+                        is_https=p.get("is_https"),
+                        screenshot_path=p.get("screenshot"),
+                        ui_summary=p.get("ui_summary"),
+                    ))
+                except Exception as e:
+                    logger.warning(f"Skipping page record for {p.get('url')}: {e}")
+
+            # Add all page records to session (no intermediate commit)
+            if page_records:
+                db.session.bulk_save_objects(page_records)
+
+            # ── SINGLE ATOMIC COMMIT — TestRun + all PageResults ──────────────
+            try:
+                run.status      = "completed"
+                run.finished_at = datetime.now(UTC)
+                db.session.commit()
+                logger.info(f"[run {run_id}] Committed: {len(page_records)} PageResults, status=completed")
+            except Exception as commit_err:
+                db.session.rollback()
+                logger.error(f"[run {run_id}] Atomic commit failed: {commit_err}", exc_info=True)
+                run2 = db.session.get(TestRun, run_id)
+                if run2:
+                    run2.status      = "failed"
+                    run2.finished_at = datetime.now(UTC)
+                    db.session.commit()
 
     except Exception as e:
         logger.error(f"Failed to persist results for run {run_id}: {e}", exc_info=True)
@@ -164,7 +261,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                 run.status      = "failed"
                 run.finished_at = datetime.now(UTC)
                 db.session.commit()
-
 
 def _persist_page_results(run_id: int, pages: list):
     """
@@ -224,7 +320,7 @@ def _persist_page_results(run_id: int, pages: list):
                     lcp_ms=p.get("lcp_ms"),
                     ttfb_ms=p.get("ttfb_ms"),
                     accessibility_issues=p.get("accessibility_issues"),
-                    broken_links_count=len(p.get("broken_links") or []),
+                    broken_links_count=len(p.get("broken_navigation_links") or []),
                     js_errors_count=len(p.get("js_errors") or []),
                     is_https=p.get("is_https"),
                     screenshot_path=p.get("screenshot"),

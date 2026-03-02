@@ -34,7 +34,9 @@ import logging
 import os
 from datetime import datetime, timedelta, UTC
 from io import BytesIO
-
+import ipaddress
+import socket
+from urllib.parse import urlparse
 import markdown
 import pandas as pd
 import pyotp
@@ -120,8 +122,37 @@ def _make_redis() -> redis.Redis:
 
 
 redis_conn = _make_redis()
-task_queue = Queue("default", connection=redis_conn)
 
+# Job queues
+task_queue       = Queue("default", connection=redis_conn)
+task_queue_quick = Queue("quick", connection=redis_conn)
+
+
+# ── Scan Concurrency Guard ───────────────────────────────
+
+_SCAN_CONCURRENCY_KEY = "guardianai:scan_semaphore"
+_MAX_CONCURRENT_SCANS = int(os.environ.get("MAX_CONCURRENT_SCANS", "4"))
+
+def _acquire_scan_slot() -> bool:
+    try:
+        current = redis_conn.incr(_SCAN_CONCURRENCY_KEY)
+        if current > _MAX_CONCURRENT_SCANS:
+            redis_conn.decr(_SCAN_CONCURRENCY_KEY)
+            return False
+
+        redis_conn.expire(_SCAN_CONCURRENCY_KEY, 3600)
+        return True
+    except Exception:
+        return True
+
+
+def _release_scan_slot():
+    try:
+        val = redis_conn.decr(_SCAN_CONCURRENCY_KEY)
+        if val < 0:
+            redis_conn.set(_SCAN_CONCURRENCY_KEY, 0)
+    except Exception:
+        pass
 # ── Filter definitions (server-side source of truth) ──────────────────────────
 
 SCAN_FILTER_DEFS = [
@@ -249,62 +280,207 @@ def load_history_from_db() -> list:
     ]
 
 
-# ── Run context builder ────────────────────────────────────────────────────────
 
+def is_safe_scan_url(url: str) -> tuple[bool, str]:
+    """
+    Validates a user-submitted scan URL against SSRF attack vectors.
+    Returns (is_safe: bool, reason: str).
+
+    Blocks:
+      - Non-http/https schemes (file://, ftp://, etc.)
+      - Private RFC1918 IP ranges (10.x, 172.16-31.x, 192.168.x)
+      - Loopback (127.x, ::1)
+      - Link-local (169.254.x — AWS metadata endpoint)
+      - Unspecified / broadcast addresses
+    """
+    if not url:
+        return False, "URL is required."
+
+    # Force scheme
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False, "Invalid URL format."
+
+    if parsed.scheme not in ("http", "https"):
+        return False, "Only http and https URLs are allowed."
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "URL must include a hostname."
+
+    # Resolve hostname to IP (catches DNS-rebinding to some extent)
+    try:
+        resolved_ip = socket.gethostbyname(hostname)
+        ip_obj = ipaddress.ip_address(resolved_ip)
+    except socket.gaierror:
+        return False, f"Cannot resolve hostname: {hostname}"
+    except ValueError:
+        return False, "Invalid IP address resolved."
+
+    if ip_obj.is_loopback:
+        return False, "Scanning loopback addresses is not allowed."
+    if ip_obj.is_private:
+        return False, "Scanning private network addresses is not allowed."
+    if ip_obj.is_link_local:
+        return False, "Scanning link-local addresses is not allowed (AWS metadata endpoint blocked)."
+    if ip_obj.is_unspecified:
+        return False, "Invalid target IP."
+    if ip_obj.is_reserved:
+        return False, "Scanning reserved IP ranges is not allowed."
+
+    return True, ""
+# ── Run context builder ────────────────────────────────────────────────────────
 def enrich_run_context(run: TestRun) -> dict:
     """
-    Loads all data files and returns template context for a given run.
-    Uses generate_metrics_from_run() for dashboard metrics (no Excel read).
-    Excel is only read when raw file is needed for legacy endpoints.
+    Builds template context for a completed run.
 
-    Safety contract: raw_data, data, metrics are always list/list/dict — never None.
+    DATA SOURCES (in priority order):
+      1. raw_data   → PageResult DB rows (DB-first, no file I/O)
+                      Falls back to raw JSON file only if no DB rows exist
+                      (handles scans completed before this fix was deployed).
+      2. ai_insight → TestRun.ai_summary_html column (DB-first)
+                      Falls back to summary_file if column is empty.
+      3. metrics    → generate_metrics_from_run() — always from DB columns.
+      4. site_health→ Reconstructed from TestRun columns — no JSON file needed.
     """
     raw_data    = []
-    report_data = []
     ai_insight  = None
     site_health = None
 
-    # Metrics from DB aggregate fields (fast — no file I/O)
     metrics = generate_metrics_from_run(run) if run.status == "completed" else {}
 
-    # Raw JSON — only loaded for the template's detail view (not for pagination)
-    if run.raw_file and os.path.exists(run.raw_file):
-        try:
-            with open(run.raw_file, "r", encoding="utf-8") as fh:
-                loaded = json.load(fh)
-            raw_data = loaded if isinstance(loaded, list) else []
-        except Exception as exc:
-            logger.warning("enrich_run_context: could not load raw file %s — %s", run.raw_file, exc)
+    # ── 1. raw_data: DB-first via PageResult, augmented with modal detail ───────
+    db_rows = PageResult.query.filter_by(run_id=run.id).order_by(PageResult.id.asc()).all()
 
-    # AI summary markdown
-    if run.summary_file and os.path.exists(run.summary_file):
-        try:
+    if db_rows:
+        # Build base raw_data from DB rows (all score/metric fields)
+        raw_data = [
+            {
+                "url":                     r.url,
+                "title":                   r.title,
+                "status":                  r.status,
+                "health_score":            r.health_score,
+                "risk_category":           r.risk_category,
+                "confidence_score":        r.confidence_score,
+                "checks_executed":         r.checks_executed,
+                "failure_pattern_id":      r.failure_pattern_id,
+                "root_cause_tag":          r.root_cause_tag,
+                "self_healing_suggestion": r.self_healing_suggestion,
+                "performance_score":       r.performance_score,
+                "accessibility_score":     r.accessibility_score,
+                "security_score":          r.security_score,
+                "functional_score":        r.functional_score,
+                "ui_form_score":           r.ui_form_score,
+                "load_time":               r.load_time,
+                "fcp_ms":                  r.fcp_ms,
+                "lcp_ms":                  r.lcp_ms,
+                "ttfb_ms":                 r.ttfb_ms,
+                "accessibility_issues":    r.accessibility_issues,
+                # Keep full relative path — template uses src="/{{ item.screenshot }}"
+                # which needs "screenshots/filename.png", NOT just "filename.png"
+                "screenshot":              r.screenshot_path or None,
+                "ui_summary":              r.ui_summary or {},
+                "result":                  "pass" if (r.status or 200) < 400 else "fail",
+                # Counts from DB for page-row badges
+                "broken_navigation_links": [None] * (r.broken_links_count or 0),
+                "js_errors":               [None] * (r.js_errors_count or 0),
+                "is_https":                r.is_https,
+                # Deep Inspection modal fields — empty until augmented from raw JSON
+                "ui_elements":    [],
+                "forms":          [],
+                "broken_links":   [],
+                "connected_pages": [],
+                "dom_latency":    None,
+                "failure_pattern": r.failure_pattern_id,
+                "viewport":       "Desktop",
+            }
+            for r in db_rows
+        ]
+
+        # ── Augment modal-only fields from raw JSON file ──────────────────────
+        # ui_elements, forms, broken_links (with url+status objects), connected_pages
+        # are NOT stored in PageResult. Load once, merge by URL.
+        if run.raw_file and os.path.exists(run.raw_file):
+            try:
+                with open(run.raw_file, "r", encoding="utf-8") as fh:
+                    raw_pages = json.load(fh)
+                rich_by_url = {
+                    rp.get("url"): rp
+                    for rp in (raw_pages if isinstance(raw_pages, list) else [])
+                    if rp.get("url")
+                }
+                for row in raw_data:
+                    rp = rich_by_url.get(row["url"])
+                    if rp:
+                        row["ui_elements"]     = rp.get("ui_elements")  or []
+                        row["forms"]           = rp.get("forms")        or []
+                        # Template uses item.broken_links as list of {url, status} objects
+                        raw_bnl = rp.get("broken_navigation_links") or rp.get("broken_links") or []
+                        row["broken_links"]    = [
+                            {"url": lnk, "status": 404} if isinstance(lnk, str) else lnk
+                            for lnk in raw_bnl
+                        ]
+                        row["connected_pages"] = rp.get("connected_pages") or []
+                        row["dom_latency"]     = rp.get("dom_latency") or rp.get("load_time")
+                        row["viewport"]        = rp.get("viewport") or "Desktop"
+                        # If screenshot missing from DB row, fill from raw JSON
+                        if not row["screenshot"]:
+                            row["screenshot"]  = rp.get("screenshot")
+            except Exception as exc:
+                logger.warning("enrich_run_context: modal augment failed %s — %s", run.raw_file, exc)
+
+    else:
+        # Fallback: everything from raw JSON (legacy scans before DB patch)
+        if run.raw_file and os.path.exists(run.raw_file):
+            try:
+                with open(run.raw_file, "r", encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                raw_data = loaded if isinstance(loaded, list) else []
+            except Exception as exc:
+                logger.warning("enrich_run_context: fallback raw file load failed %s — %s", run.raw_file, exc)
+
+    # ── 2. AI insight: DB column first ───────────────────────────────────────
+    if run.ai_summary_html:
+        ai_insight = run.ai_summary_html  # already HTML from tasks.py FIX4
+    elif run.ai_summary:
+        ai_insight = markdown.markdown(run.ai_summary)
+    else:
+        # Fallback to file for legacy scans
+        if run.summary_file and os.path.exists(run.summary_file):
             try:
                 with open(run.summary_file, "r", encoding="utf-8") as fh:
-                    ai_insight = fh.read()
-            except UnicodeDecodeError:
-                with open(run.summary_file, "r", encoding="latin-1") as fh:
-                    ai_insight = fh.read()
-            if ai_insight:
-                ai_insight = markdown.markdown(ai_insight)
-        except Exception as exc:
-            logger.warning("enrich_run_context: could not load summary %s — %s", run.summary_file, exc)
+                    raw_txt = fh.read()
+                if raw_txt:
+                    ai_insight = markdown.markdown(raw_txt)
+                    # Backfill DB so next load is instant
+                    run.ai_summary      = raw_txt
+                    run.ai_summary_html = ai_insight
+                    db.session.commit()
+            except Exception as exc:
+                logger.warning("enrich_run_context: fallback summary file load failed %s — %s", run.summary_file, exc)
 
-    # Site health JSON
-    if run.site_summary_file and os.path.exists(run.site_summary_file):
-        try:
-            with open(run.site_summary_file, "r", encoding="utf-8") as fh:
-                site_health = json.load(fh)
-        except Exception as exc:
-            logger.warning("enrich_run_context: could not load site summary %s — %s", run.site_summary_file, exc)
+    # ── 3. Site health: reconstruct from TestRun columns (no file I/O) ───────
+    if run.site_health_score is not None:
+        site_health = {
+            "site_health_score": run.site_health_score,
+            "risk_category":     run.risk_category,
+            "confidence_score":  run.confidence_score,
+            "component_averages": {
+                "performance":   run.avg_performance_score,
+                "accessibility": run.avg_accessibility_score,
+                "security":      run.avg_security_score,
+                "functional":    run.avg_functional_score,
+                "ui_form":       run.avg_ui_form_score,
+            },
+        }
 
-    # Active scan filters — read from JSONB column (already a list)
     active_filters = run.scan_filters or []
-
-    # Dashboard intelligence bundle
-    intel = {}
     return {
-        "data":             report_data,
+        "data":             [],           # legacy field — raw_data is the live source
         "ai_insight":       ai_insight,
         "metrics":          metrics,
         "raw_data":         raw_data,
@@ -313,9 +489,8 @@ def enrich_run_context(run: TestRun) -> dict:
         "active_filters":   active_filters,
         "scan_filter_defs": SCAN_FILTER_DEFS,
         "filter_icons":     FILTER_ICONS,
-        "intel":            intel,
+        "intel":            {},
     }
-
 
 # ── Progress payload builder ───────────────────────────────────────────────────
 
@@ -517,7 +692,6 @@ def logout():
 # ════════════════════════════════════════════════════════════════════════════════
 # MAIN APP ROUTES
 # ════════════════════════════════════════════════════════════════════════════════
-
 @app.route("/", methods=["GET", "POST"])
 @login_required
 @limiter.limit("30 per minute", methods=["POST"])   # Scan submission rate limit
@@ -527,24 +701,33 @@ def home():
 
         url = request.form.get("url", "").strip()
 
-        # ── Resolve page_limit as int immediately — never pass a raw string downstream ──
+        # ── Validate URL presence ───────────────────────────────────────────
+        if not url:
+            ctx = _empty_ctx(error="Please enter a URL.")
+            return render_template("index.html", **ctx)
+
+        # ── SSRF Protection ─────────────────────────────────────────────────
+        safe, reason = is_safe_scan_url(url)
+        if not safe:
+            ctx = _empty_ctx(error=f"Invalid URL: {reason}")
+            return render_template("index.html", **ctx)
+
+        # ── Resolve page_limit safely ───────────────────────────────────────
         try:
             page_limit = int(request.form.get("page_limit") or current_user.page_limit_default)
         except (TypeError, ValueError):
             page_limit = int(current_user.page_limit_default)
 
+        # ── Filters ─────────────────────────────────────────────────────────
         selected_filters = request.form.getlist("scan_filters")
         active_filters   = [f for f in selected_filters if f in VALID_FILTER_KEYS]
         if not active_filters:
             active_filters = list(VALID_FILTER_KEYS)
 
-        if not url:
-            ctx = _empty_ctx(error="Please enter a URL.", active_filters=active_filters)
-            return render_template("index.html", **ctx)
-
-        # ── Plan limit enforcement ──
+        # ── Plan limit enforcement ──────────────────────────────────────────
         limits      = _plan_limits(current_user)
         daily_limit = limits.get("scans_per_day")
+
         if daily_limit is not None and _scans_today(current_user) >= daily_limit:
             ctx = _empty_ctx(
                 error=f"Daily scan limit ({daily_limit}) reached for your {current_user.plan} plan.",
@@ -556,27 +739,44 @@ def home():
         if page_cap is not None:
             page_limit = min(page_limit, page_cap)
 
+        # ── Concurrency guard (MOVE BEFORE DB INSERT) ──────────────────────
+        if not _acquire_scan_slot():
+            ctx = _empty_ctx(
+                error="Scan capacity reached. Please try again shortly.",
+                active_filters=active_filters,
+            )
+            return render_template("index.html", **ctx)
+
+        # ── Create TestRun record ───────────────────────────────────────────
         run = TestRun(
             target_url=url,
             status="queued",
             started_at=datetime.now(UTC),
             user_id=current_user.id,
             progress=0,
-            scan_filters=active_filters,  # Native JSONB list — no json.dumps()
+            scan_filters=active_filters,  # Native JSONB list
         )
+
         db.session.add(run)
         db.session.commit()
 
-        task_queue.enqueue(
+        # ── Queue Routing (quick vs default) ───────────────────────────────
+        _queue = task_queue_quick if (page_limit or 999) <= 5 else task_queue
+
+        _queue.enqueue(
             run_scan,
-            run.id, url, page_limit, current_user.id, active_filters,
+            run.id,
+            url,
+            page_limit,
+            current_user.id,
+            active_filters,
             job_timeout=config.JOB_TIMEOUT,
             retry=Retry(max=1, interval=60),
         )
 
         return redirect(f"/run/{run.id}")
 
-    # GET — show most recent run
+    # ── GET: Show most recent run ───────────────────────────────────────────
     run = (
         _history_query(current_user)
         .order_by(TestRun.id.desc())
@@ -589,15 +789,21 @@ def home():
         "active_filters":   list(VALID_FILTER_KEYS),
         "filter_icons":     FILTER_ICONS,
     }
+
     if run:
         ctx.update(enrich_run_context(run))
     else:
-        ctx.update({"data": [], "ai_insight": None, "metrics": {},
-                    "raw_data": [], "site_health": None, "current_run": None,
-                    "intel": {}})
+        ctx.update({
+            "data": [],
+            "ai_insight": None,
+            "metrics": {},
+            "raw_data": [],
+            "site_health": None,
+            "current_run": None,
+            "intel": {},
+        })
 
     return render_template("index.html", **ctx)
-
 
 def _empty_ctx(error: str = None, active_filters: list = None) -> dict:
     return {
@@ -742,7 +948,7 @@ def run_pages_paginated(run_id):
             "broken_links":            r.broken_links_count,
             "js_errors":               r.js_errors_count,
             "is_https":                r.is_https,
-            "screenshot":              r.screenshot_path,
+            "screenshot": os.path.basename(r.screenshot_path) if r.screenshot_path else None,
             "ui_summary":              r.ui_summary or {},
         }
         for r in rows
@@ -901,7 +1107,7 @@ def run_pages_api(run_id):
             "lcp_ms":               p.get("lcp_ms"),
             "ttfb_ms":              p.get("ttfb_ms"),
             "accessibility_issues": p.get("accessibility_issues"),
-            "broken_links":         len(p.get("broken_links") or []),
+            "broken_links":         len(p.get("broken_navigation_links") or []),
             "js_errors":            len(p.get("js_errors") or []),
             "is_https":             p.get("is_https"),
             "screenshot":           p.get("screenshot"),
@@ -1179,9 +1385,8 @@ def dashboard():
 @app.route("/screenshots/<path:filename>")
 @login_required
 def serve_screenshot(filename):
-    # login_required prevents unauthenticated access to screenshots
-    return send_from_directory(SCREENSHOT_DIR, filename)
-
+    safe_name = os.path.basename(filename)
+    return send_from_directory(SCREENSHOT_DIR, safe_name)
 
 
 # ── Admin + Password Reset Blueprints ─────────────────────────────────────────

@@ -185,14 +185,48 @@ def compute_page_health_score(
 def compute_site_health_score(page_health_list: list) -> dict:
     """
     Aggregates per-page health breakdowns into a site-level summary.
+    NOW INCLUDES component_averages — required by tasks.py to populate
+    avg_performance_score, avg_accessibility_score, etc. on TestRun.
     """
-    if not page_health_list:
-        return {"site_health_score": None, "risk_category": "Unknown", "page_count": 0}
+    _EMPTY = {
+        "site_health_score":  None,
+        "risk_category":      "Unknown",
+        "page_count":         0,
+        "component_averages": {},
+    }
 
-    scores = [p.get("health_score") for p in page_health_list if p and p.get("health_score") is not None]
+    if not page_health_list:
+        return _EMPTY
+
+    # ── Per-component averages ────────────────────────────────────────────────
+    # page_health_list entries are health_breakdown dicts that contain "components"
+    # key from compute_page_health_score(). Structure:
+    #   {"health_score": float, "risk_category": str,
+    #    "components": {"performance": float|None, "accessibility": float|None, ...}}
+    component_keys = ["performance", "accessibility", "security", "functional", "ui_form"]
+    component_averages: dict = {}
+    for key in component_keys:
+        vals = [
+            p.get("components", {}).get(key)
+            for p in page_health_list
+            if p and p.get("components", {}).get(key) is not None
+        ]
+        component_averages[key] = round(sum(vals) / len(vals), 1) if vals else None
+
+    # ── Site health score ─────────────────────────────────────────────────────
+    scores = [
+        p.get("health_score")
+        for p in page_health_list
+        if p and p.get("health_score") is not None
+    ]
 
     if not scores:
-        return {"site_health_score": None, "risk_category": "Unknown", "page_count": len(page_health_list)}
+        return {
+            "site_health_score":  None,
+            "risk_category":      "Unknown",
+            "page_count":         len(page_health_list),
+            "component_averages": component_averages,
+        }
 
     avg_score = round(sum(scores) / len(scores), 1)
     min_score = round(min(scores), 1)
@@ -204,8 +238,9 @@ def compute_site_health_score(page_health_list: list) -> dict:
             break
 
     return {
-        "site_health_score": avg_score,
-        "min_health_score":  min_score,
-        "risk_category":     risk_category,
-        "page_count":        len(page_health_list),
+        "site_health_score":  avg_score,
+        "min_health_score":   min_score,
+        "risk_category":      risk_category,
+        "page_count":         len(page_health_list),
+        "component_averages": component_averages,   # ← NEW: consumed by tasks.py
     }

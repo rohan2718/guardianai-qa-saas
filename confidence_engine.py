@@ -432,14 +432,77 @@ def compute_self_healing_suggestion(page_data: dict) -> str | None:
         return None
 
 
+def compute_page_confidence(page_data: dict, active_filters: list = None) -> float:
+    """
+    Real per-page confidence: field completeness × quality penalties.
+
+    Penalties reduce confidence when data reliability is questionable:
+      - HTTP errors (4xx/5xx) → fewer fields populated, unreliable scores
+      - JS errors           → page likely partially broken during scan
+      - Broken navigation   → site errors may corrupt timing metrics
+      - Low health score    → additional signal that scan depth was limited
+
+    Returns 5.0 – 100.0 (never zero — even a failed page has some data).
+    """
+    # Base: weighted field completeness (keeps existing logic intact)
+    completeness_result = compute_confidence_score(page_data, active_filters)
+    completeness = completeness_result.get("completeness_ratio", 0.0)
+
+    http_status  = page_data.get("status") or 200
+    js_errors    = len(page_data.get("js_errors") or [])
+    broken_nav   = len(page_data.get("broken_navigation_links") or [])
+    health_score = page_data.get("health_score")
+
+    # ── Penalty 1: HTTP error status ──────────────────────────────────────────
+    # 5xx = server error, scan likely got fallback/error page data
+    # 4xx = not found/forbidden, almost no real metrics available
+    if http_status >= 500:
+        status_penalty = 0.30
+    elif http_status >= 400:
+        status_penalty = 0.20
+    elif http_status >= 300:
+        status_penalty = 0.05   # redirect — minor, still got destination data
+    else:
+        status_penalty = 0.0
+
+    # ── Penalty 2: JavaScript errors ─────────────────────────────────────────
+    # JS errors mean scripts failed → UI elements may be missing from scan
+    # Cap at 0.20 (5+ errors = full cap)
+    js_penalty = min(0.20, js_errors * 0.04)
+
+    # ── Penalty 3: Broken navigation density ─────────────────────────────────
+    # Broken internal links suggest the site structure was unreliable
+    # Cap at 0.15 (5+ broken nav = full cap)
+    nav_penalty = min(0.15, broken_nav * 0.03)
+
+    # ── Penalty 4: Very low health score ─────────────────────────────────────
+    # Health < 30 means most engines found severe issues → scan data noisy
+    if health_score is not None and health_score < 30:
+        health_penalty = 0.10
+    elif health_score is not None and health_score < 50:
+        health_penalty = 0.05
+    else:
+        health_penalty = 0.0
+
+    raw = completeness - status_penalty - js_penalty - nav_penalty - health_penalty
+    return round(max(5.0, min(100.0, raw * 100)), 1)
+
 def enrich_page_with_ai_fields(page_data: dict, active_filters: list = None) -> dict:
-    confidence_result = compute_confidence_score(page_data, active_filters)
-    page_data["confidence_score"]   = confidence_result.get("confidence_score")
-    page_data["checks_executed"]    = confidence_result.get("checks_executed")
-    page_data["checks_null"]        = confidence_result.get("checks_null")
-    page_data["failure_pattern_id"] = compute_failure_pattern_id(page_data)
-    page_data["root_cause_tag"]     = compute_root_cause_tag(page_data)
+    """
+    Enriches page_data dict in-place with AI/confidence fields.
+    confidence_score now uses quality-penalised formula — varies per page.
+    """
+    # Quality-penalised confidence (replaces raw completeness ratio)
+    page_data["confidence_score"] = compute_page_confidence(page_data, active_filters)
+
+    # Keep checks_executed / checks_null for tooltip detail
+    completeness_result = compute_confidence_score(page_data, active_filters)
+    page_data["checks_executed"]         = completeness_result.get("checks_executed")
+    page_data["checks_null"]             = completeness_result.get("checks_null")
+
+    page_data["failure_pattern_id"]      = compute_failure_pattern_id(page_data)
+    page_data["root_cause_tag"]          = compute_root_cause_tag(page_data)
     page_data["self_healing_suggestion"] = compute_self_healing_suggestion(page_data)
-    page_data["similar_issue_ref"]  = None
-    page_data["ai_confidence"]      = None
+    page_data["similar_issue_ref"]       = None
+    page_data["ai_confidence"]           = None
     return page_data
