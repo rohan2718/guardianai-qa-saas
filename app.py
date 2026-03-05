@@ -555,11 +555,14 @@ def register():
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
-        email    = request.form.get("email", "").strip().lower() or None
+        email    = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
 
         if not username or not password:
             return render_template("register.html", error="Username and password are required.")
+
+        if not email or "@" not in email:
+            return render_template("register.html", error="A valid email address is required.")
 
         if User.query.filter_by(username=username).first():
             return render_template("register.html", error="Username already exists.")
@@ -626,7 +629,8 @@ def login():
                     action   = "login_2fa_success",
                     extra_data = {"username": user.username},
                 )
-                return redirect("/")
+                next_page = "/" if user.email else url_for("reset.add_email", next="/")
+                return redirect(next_page)
 
             write_audit_log(
                 db, AuditLog,
@@ -1400,6 +1404,8 @@ app.register_blueprint(admin_bp)
 
 from password_reset import reset_bp
 app.register_blueprint(reset_bp)
+
+# Rate-limit the reset request endpoints to prevent email flooding
 
 # ════════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT

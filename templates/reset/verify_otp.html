@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Enter Reset Code — Guardian AI</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --primary: #6366f1; --accent: #8b5cf6; --secondary: #ec4899;
+        --bg: #f0f4f8; --card: #ffffff; --text: #0f172a; --muted: #64748b;
+        --border: #e2e8f0; --danger: #ef4444; --warn: #f59e0b;
+        --font: "Inter", sans-serif; --mono: "JetBrains Mono", monospace; --r: 8px;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: var(--font); background: var(--bg); color: var(--text);
+        min-height: 100vh; display: flex; align-items: center; justify-content: center;
+        background-image:
+          radial-gradient(circle at 5% 10%, rgba(99,102,241,0.07) 0%, transparent 30%),
+          radial-gradient(circle at 95% 90%, rgba(236,72,153,0.07) 0%, transparent 30%);
+      }
+      .card {
+        background: var(--card); border-radius: 20px; padding: 44px 40px;
+        width: 100%; max-width: 420px; box-shadow: 0 20px 40px -5px rgba(0,0,0,0.12);
+        border: 1px solid var(--border); position: relative; overflow: hidden;
+        animation: fadeIn 0.4s ease-out both;
+      }
+      .card::before {
+        content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+        background: linear-gradient(90deg, var(--primary), var(--secondary));
+      }
+      @keyframes fadeIn { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+      .icon {
+        width: 54px; height: 54px; border-radius: 14px; margin-bottom: 22px;
+        background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1));
+        border: 1px solid rgba(99,102,241,0.18);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 22px; color: var(--primary);
+      }
+      h2 { font-size: 24px; font-weight: 800; margin-bottom: 6px; }
+      .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 28px; line-height: 1.5; }
+
+      /* OTP input group — 6 individual boxes */
+      .otp-row {
+        display: flex; gap: 10px; justify-content: center; margin-bottom: 24px;
+      }
+      .otp-row input {
+        width: 52px; height: 60px; border: 2px solid var(--border); border-radius: 12px;
+        text-align: center; font-size: 26px; font-weight: 700; font-family: var(--mono);
+        color: var(--text); background: #f8fafc; transition: border-color .15s, box-shadow .15s;
+        outline: none; caret-color: var(--primary);
+      }
+      .otp-row input:focus {
+        border-color: var(--primary); background: white;
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+      }
+      .otp-row input.filled { border-color: var(--accent); background: rgba(99,102,241,0.04); }
+      .otp-row input.error-box { border-color: var(--danger); background: rgba(239,68,68,0.04); }
+
+      /* Hidden full input (submitted) */
+      #otp-hidden { display: none; }
+
+      .timer {
+        text-align: center; font-size: 13px; color: var(--muted); margin-bottom: 20px;
+      }
+      .timer span { font-weight: 700; color: var(--primary); font-family: var(--mono); }
+      .timer.urgent span { color: var(--danger); }
+
+      .btn {
+        width: 100%; padding: 14px; border: none; border-radius: var(--r);
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: white; font-size: 15px; font-weight: 700; font-family: var(--font);
+        cursor: pointer; transition: all .2s;
+        box-shadow: 0 4px 14px rgba(99,102,241,0.3);
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+      }
+      .btn:hover { opacity: .9; transform: translateY(-1px); }
+      .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+      .msg {
+        padding: 12px 14px; border-radius: var(--r); font-size: 13px;
+        margin-bottom: 18px; display: flex; align-items: flex-start; gap: 10px; line-height: 1.5;
+      }
+      .msg-error  { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.25);  color: var(--danger); }
+      .msg-warn   { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.25); color: #b45309; }
+
+      .divider {
+        display: flex; align-items: center; gap: 12px; margin: 20px 0;
+      }
+      .divider::before, .divider::after {
+        content: ""; flex: 1; height: 1px; background: var(--border);
+      }
+      .divider span { font-size: 12px; color: #94a3b8; white-space: nowrap; }
+
+      .link-btn {
+        display: block; text-align: center; font-size: 13px; color: var(--muted);
+        padding: 10px; border: 1.5px solid var(--border); border-radius: var(--r);
+        text-decoration: none; transition: border-color .15s, color .15s;
+      }
+      .link-btn:hover { border-color: var(--primary); color: var(--primary); }
+
+      .footer { display: block; text-align: center; margin-top: 20px; font-size: 13px; color: var(--muted); }
+      .footer a { color: var(--primary); font-weight: 600; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="icon"><i class="fa-solid fa-shield-halved"></i></div>
+      <h2>Enter Reset Code</h2>
+      <p class="subtitle">
+        We sent a <strong>6-digit code</strong> to your registered email address.
+        Enter it below — it expires in <strong>10 minutes</strong>.
+      </p>
+
+      {% if error %}
+        {% if expired %}
+          <div class="msg msg-warn">
+            <i class="fa-solid fa-clock" style="flex-shrink:0;margin-top:1px;"></i>
+            <span>{{ error }}</span>
+          </div>
+        {% else %}
+          <div class="msg msg-error">
+            <i class="fa-solid fa-circle-exclamation" style="flex-shrink:0;margin-top:1px;"></i>
+            <span>{{ error }}</span>
+          </div>
+        {% endif %}
+      {% endif %}
+
+      {% if not expired %}
+        <form method="POST" id="otpForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+          <input type="hidden" name="otp" id="otp-hidden" />
+
+          <div class="otp-row" id="otp-boxes">
+            <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" />
+            <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" />
+            <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" />
+            <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" />
+            <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" />
+            <input type="text" inputmode="numeric" maxlength="1" pattern="[0-9]" autocomplete="off" />
+          </div>
+
+          <div class="timer" id="timer">
+            Code expires in <span id="countdown">10:00</span>
+          </div>
+
+          <button type="submit" class="btn" id="submitBtn" disabled>
+            <i class="fa-solid fa-arrow-right"></i> Verify Code
+          </button>
+        </form>
+
+        <div class="divider"><span>BACKUP OPTION</span></div>
+
+        <a href="{{ url_for('reset.forgot_password') }}" class="link-btn">
+          <i class="fa-solid fa-envelope" style="margin-right:6px;"></i>
+          Use magic link from email or request a new code
+        </a>
+      {% else %}
+        <a href="{{ url_for('reset.forgot_password') }}" class="btn" style="text-decoration:none;margin-top:8px;">
+          <i class="fa-solid fa-rotate-right"></i> Request New Code
+        </a>
+      {% endif %}
+
+      <div class="footer" style="margin-top:20px;">
+        <a href="/login">← Back to Login</a>
+      </div>
+    </div>
+
+    <script>
+      const boxes  = document.querySelectorAll("#otp-boxes input");
+      const hidden = document.getElementById("otp-hidden");
+      const btn    = document.getElementById("submitBtn");
+
+      function syncHidden() {
+        const val = [...boxes].map(b => b.value).join("");
+        hidden.value = val;
+        const complete = val.length === 6 && /^\d{6}$/.test(val);
+        btn.disabled = !complete;
+        boxes.forEach(b => {
+          b.classList.toggle("filled", b.value !== "");
+        });
+      }
+
+      boxes.forEach((box, i) => {
+        box.addEventListener("input", e => {
+          // Allow only digits
+          box.value = box.value.replace(/\D/g, "").slice(-1);
+          syncHidden();
+          if (box.value && i < boxes.length - 1) boxes[i + 1].focus();
+        });
+
+        box.addEventListener("keydown", e => {
+          if (e.key === "Backspace" && !box.value && i > 0) {
+            boxes[i - 1].value = "";
+            boxes[i - 1].focus();
+            syncHidden();
+          }
+        });
+
+        box.addEventListener("paste", e => {
+          e.preventDefault();
+          const data = (e.clipboardData || window.clipboardData)
+            .getData("text").replace(/\D/g, "").slice(0, 6);
+          data.split("").forEach((ch, j) => {
+            if (boxes[j]) boxes[j].value = ch;
+          });
+          syncHidden();
+          const nextEmpty = [...boxes].findIndex(b => !b.value);
+          if (nextEmpty >= 0) boxes[nextEmpty].focus();
+          else boxes[boxes.length - 1].focus();
+        });
+      });
+
+      // Auto-focus first box
+      if (boxes[0]) boxes[0].focus();
+
+      // Countdown timer — 10 minutes
+      let seconds = 10 * 60;
+      const countdownEl = document.getElementById("countdown");
+      const timerEl     = document.getElementById("timer");
+
+      function tick() {
+        if (seconds <= 0) {
+          countdownEl.textContent = "expired";
+          timerEl.classList.add("urgent");
+          btn.disabled = true;
+          return;
+        }
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        countdownEl.textContent = `${m}:${String(s).padStart(2, "0")}`;
+        if (seconds <= 60) timerEl.classList.add("urgent");
+        seconds--;
+        setTimeout(tick, 1000);
+      }
+      tick();
+
+      // Submit on last digit filled
+      document.getElementById("otpForm").addEventListener("submit", e => {
+        const val = hidden.value;
+        if (!val || val.length !== 6) { e.preventDefault(); return; }
+      });
+    </script>
+  </body>
+</html>

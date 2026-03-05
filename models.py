@@ -227,6 +227,7 @@ class PasswordResetToken(db.Model):
     id         = db.Column(db.Integer, primary_key=True)
     user_id    = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     token      = db.Column(db.String(128), unique=True, nullable=False)
+    otp_code   = db.Column(db.String(6), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(UTC))
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
     used       = db.Column(db.Boolean, default=False, nullable=False)

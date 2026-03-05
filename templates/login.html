@@ -569,14 +569,24 @@
         </button>
       </form>
 
+     {% if not show_otp %}
+      <div style="text-align:center; margin-top: 14px; margin-bottom: 2px;">
+        <a href="/forgot-password" style="font-size:13px; color: var(--primary); text-decoration:none; font-weight:500;">
+          <i class="fa-solid fa-key" style="font-size:11px; margin-right:4px;"></i>Forgot password?
+        </a>
+      </div>
+      {% endif %}
+
+      {% if reset_success %}
+      <div style="background:rgba(16,185,129,0.08); border:1px solid rgba(16,185,129,0.25); color:#059669;
+                  padding:12px 14px; border-radius:8px; font-size:13px; margin-top:14px;
+                  display:flex; align-items:center; gap:10px;">
+        <i class="fa-solid fa-circle-check" style="flex-shrink:0;"></i>
+        <span>Password updated successfully. Please sign in.</span>
+      </div>
+      {% endif %}
       <a href="/register" class="footer-link">
-        Don't have an account? <b>Create one</b>
-        <i
-          class="fa-solid fa-arrow-right"
-          style="margin-left: 4px; font-size: 12px"
-        ></i>
-      </a>
-    </div>
+        Don't have an account?
 
     <script>
       // Auto-focus first input on load
