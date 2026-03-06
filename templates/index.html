@@ -1262,7 +1262,7 @@
         overflow-y: auto;
       }
       .tab-pane.active {
-        display: block;
+        /* display is set inline by switchModalTab to support both flex (UI tab) and block */
         animation: fadeIn 0.25s ease;
       }
 
@@ -1769,7 +1769,8 @@
           </button>
           <div class="page-title">
             <h2 id="page-title-text">
-              {% if current_run %}{{ current_run.target_url }}{% else %}VC-ERP Smart Agentic QA Automation {% endif %}
+              {% if current_run %}{{ current_run.target_url }}{% else %}VC-ERP
+              Smart Agentic QA Automation {% endif %}
             </h2>
             <p>
               {% if current_run and current_run.finished_at %}Scan completed: {{
@@ -2188,7 +2189,6 @@
             {% endif %}
 
             <!-- Dashboard Intelligence Panel -->
-            
 
             <!-- Per-Page Results -->
             <div class="fade-in-up delay-3">
@@ -2564,106 +2564,168 @@
               <div
                 id="tab-content-ui-{{ loop.index0 }}"
                 class="tab-pane active"
+                style="
+                  display: flex;
+                  flex-direction: column;
+                  height: 100%;
+                  min-height: 0;
+                "
               >
-                <table class="tab-table">
-                  <thead>
-                    <tr>
-                      <th>Element</th>
-                      <th>XPath</th>
-                      <th style="text-align: center">Visible</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {% for el in item.ui_elements %}
-                    <tr>
-                      <td>
-                        <span
-                          style="
-                            font-family: var(--font-code);
-                            font-size: 10px;
-                            padding: 2px 6px;
-                            background: #eef2ff;
-                            border-radius: 4px;
+                {# ── Raw data embedded as JSON for JavaScript to consume ── #}
+                <script type="application/json" id="ui-data-{{ loop.index0 }}">
+                  {{ item.ui_elements | tojson }}
+                </script>
+                <script
+                  type="application/json"
+                  id="ui-summary-{{ loop.index0 }}"
+                >
+                  {{ item.ui_summary | tojson if item.ui_summary else '{}' }}
+                </script>
 
-                            color: var(--primary);
-                          "
-                          >{{ el.tag }}</span
-                        >
-                        <div
-                          style="
-                            font-size: 12px;
-                            font-weight: 500;
-                            margin-top: 4px;
-                            max-width: 150px;
-                            overflow: hidden;
-                            text-overflow: ellipsis;
-                            white-space: nowrap;
-                            color: var(--text-muted);
-                          "
-                        >
-                          {{ el.text or "No Text" }}
-                        </div>
-                      </td>
-                      <td>
-                        <code
-                          style="
-                            font-family: var(--font-code);
-                            font-size: 10px;
-                            color: #6366f1;
-                            background: #eef2ff;
-                            padding: 2px 5px;
-                            border-radius: 4px;
-                            display: block;
-                            max-width: 180px;
-                            overflow: hidden;
-                            text-overflow: ellipsis;
-                            white-space: nowrap;
-                          "
-                          title="{{ el.xpath }}"
-                          >{{ el.xpath }}</code
-                        >
-                      </td>
-                      <td style="text-align: center">
-                        {% if el.visible %}<i
-                          class="fa-solid fa-eye"
-                          style="color: var(--success)"
-                        ></i
-                        >{% else %}<i
-                          class="fa-solid fa-eye-slash"
-                          style="color: #cbd5e1"
-                        ></i
-                        >{% endif %}
-                      </td>
-                    </tr>
-                    {% endfor %}
-                  </tbody>
-                </table>
+                {# ── KPI strip ── #}
+                <div
+                  id="ui-kpi-{{ loop.index0 }}"
+                  style="
+                    display: grid;
+                    grid-template-columns: repeat(5, 1fr);
+                    gap: 8px;
+                    padding: 14px 14px 0;
+                    flex-shrink: 0;
+                  "
+                ></div>
+
+                {# ── Type filter chips + search ── #}
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 10px 14px;
+                    flex-wrap: wrap;
+                    border-bottom: 1px solid var(--border);
+                    flex-shrink: 0;
+                  "
+                >
+                  <input
+                    type="text"
+                    id="ui-search-{{ loop.index0 }}"
+                    placeholder="Filter by text or tag…"
+                    oninput="uiFilter({{ loop.index0 }})"
+                    style="
+                      flex: 1;
+                      min-width: 140px;
+                      padding: 6px 10px;
+                      border: 1.5px solid var(--border);
+                      border-radius: 6px;
+                      font-size: 12px;
+                      font-family: var(--font-main);
+                      background: #f8fafc;
+                      color: var(--text-main);
+                      outline: none;
+                    "
+                  />
+                  <div
+                    id="ui-chips-{{ loop.index0 }}"
+                    style="display: flex; gap: 5px; flex-wrap: wrap"
+                  ></div>
+                  <span
+                    id="ui-count-{{ loop.index0 }}"
+                    style="
+                      font-size: 11px;
+                      color: var(--text-muted);
+                      white-space: nowrap;
+                      margin-left: auto;
+                    "
+                  ></span>
+                </div>
+
+                {# ── Table ── #}
+                <div style="flex: 1; overflow-y: auto; min-height: 0">
+                  <table
+                    class="tab-table"
+                    style="width: 100%; border-collapse: collapse"
+                  >
+                    <thead>
+                      <tr>
+                        <th style="width: 90px">Tag</th>
+                        <th>Text / Label</th>
+                        <th style="width: 140px">Type / ID</th>
+                        <th style="width: 70px; text-align: center">Visible</th>
+                      </tr>
+                    </thead>
+                    <tbody id="ui-tbody-{{ loop.index0 }}"></tbody>
+                  </table>
+                  <div
+                    id="ui-empty-{{ loop.index0 }}"
+                    style="
+                      display: none;
+                      text-align: center;
+                      padding: 40px 20px;
+                      color: var(--text-muted);
+                    "
+                  >
+                    <i
+                      class="fa-solid fa-layer-group"
+                      style="
+                        font-size: 28px;
+                        opacity: 0.2;
+                        display: block;
+                        margin-bottom: 10px;
+                      "
+                    ></i>
+                    <span style="font-size: 13px"
+                      >No elements match your filter.</span
+                    >
+                  </div>
+                </div>
+
+                {# ── Pagination bar ── #}
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    padding: 9px 14px;
+                    border-top: 1px solid var(--border);
+                    flex-shrink: 0;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                  "
+                >
+                  <span
+                    id="ui-pg-info-{{ loop.index0 }}"
+                    style="font-size: 11px; color: var(--text-muted)"
+                  ></span>
+                  <div
+                    id="ui-pg-btns-{{ loop.index0 }}"
+                    style="display: flex; gap: 4px"
+                  ></div>
+                </div>
               </div>
-<div
+              <div
                 id="tab-content-forms-{{ loop.index0 }}"
                 class="tab-pane"
-                style="padding: 18px; background: #f8fafc;"
+                style="padding: 18px; background: #f8fafc"
               >
-                {% set visible_forms = [] %}
-                {% for form in (item.forms or []) %}
-                  {% set vf = form.fields | selectattr("type", "ne", "hidden") | list if form.fields else [] %}
-                  {% if vf | length > 0 or form.has_submit %}
-                    {% if visible_forms.append(form) %}{% endif %}
-                  {% endif %}
-                {% endfor %}
-
-                {% if visible_forms | length > 0 %}
-                  {% for form in visible_forms %}
-                  <div style="
+                {% set visible_forms = [] %} {% for form in (item.forms or [])
+                %} {% set vf = form.fields | selectattr("type", "ne", "hidden")
+                | list if form.fields else [] %} {% if vf | length > 0 or
+                form.has_submit %} {% if visible_forms.append(form) %}{% endif
+                %} {% endif %} {% endfor %} {% if visible_forms | length > 0 %}
+                {% for form in visible_forms %}
+                <div
+                  style="
                     margin-bottom: 20px;
                     background: #fff;
                     border: 1px solid #e2e8f0;
                     border-radius: 12px;
                     overflow: hidden;
-                    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
-                  ">
-                    <!-- Form header bar -->
-                    <div style="
+                    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+                  "
+                >
+                  <!-- Form header bar -->
+                  <div
+                    style="
                       padding: 10px 16px;
                       background: #f1f5f9;
                       border-bottom: 1px solid #e2e8f0;
@@ -2672,42 +2734,90 @@
                       justify-content: space-between;
                       flex-wrap: wrap;
                       gap: 6px;
-                    ">
-                      <div style="display:flex; align-items:center; gap:8px;">
-                        <i class="fa-solid fa-wpforms" style="color:#6366f1; font-size:13px;"></i>
-                        <span style="font-size:12px; font-weight:600; color:#1e293b;">
-                          {% if form.form_purpose %}{{ form.form_purpose }} Form{% else %}Form{% endif %}
-                          {% if form.name %}<span style="color:#94a3b8; font-weight:400;"> · {{ form.name }}</span>{% endif %}
-                        </span>
-                      </div>
-                      <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                        <!-- METHOD badge -->
-                        <span style="
+                    "
+                  >
+                    <div style="display: flex; align-items: center; gap: 8px">
+                      <i
+                        class="fa-solid fa-wpforms"
+                        style="color: #6366f1; font-size: 13px"
+                      ></i>
+                      <span
+                        style="
+                          font-size: 12px;
+                          font-weight: 600;
+                          color: #1e293b;
+                        "
+                      >
+                        {% if form.form_purpose %}{{ form.form_purpose }} Form{%
+                        else %}Form{% endif %} {% if form.name %}<span
+                          style="color: #94a3b8; font-weight: 400"
+                        >
+                          · {{ form.name }}</span
+                        >{% endif %}
+                      </span>
+                    </div>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap">
+                      <!-- METHOD badge -->
+                      <span
+                        style="
                           font-size: 10px; font-weight: 700; padding: 2px 8px;
                           border-radius: 20px; letter-spacing: 0.5px;
                           background: {% if form.method == 'POST' %}#dbeafe{% else %}#dcfce7{% endif %};
                           color: {% if form.method == 'POST' %}#1d4ed8{% else %}#166534{% endif %};
-                        ">{{ form.method or 'GET' }}</span>
-                        <!-- Field count badge -->
-                        <span style="font-size:10px; padding:2px 8px; border-radius:20px; background:#f1f5f9; color:#64748b;">
-                          {{ form.fields_count or 0 }} field{{ 's' if (form.fields_count or 0) != 1 else '' }}
-                        </span>
-                        <!-- Submit badge -->
-                        {% if form.has_submit %}
-                        <span style="font-size:10px; padding:2px 8px; border-radius:20px; background:#dcfce7; color:#166534;">
-                          <i class="fa-solid fa-check" style="font-size:9px;"></i> Has Submit
-                        </span>
-                        {% else %}
-                        <span style="font-size:10px; padding:2px 8px; border-radius:20px; background:#fef9c3; color:#854d0e;">
-                          <i class="fa-solid fa-triangle-exclamation" style="font-size:9px;"></i> No Submit
-                        </span>
-                        {% endif %}
-                      </div>
+                        "
+                        >{{ form.method or 'GET' }}</span
+                      >
+                      <!-- Field count badge -->
+                      <span
+                        style="
+                          font-size: 10px;
+                          padding: 2px 8px;
+                          border-radius: 20px;
+                          background: #f1f5f9;
+                          color: #64748b;
+                        "
+                      >
+                        {{ form.fields_count or 0 }} field{{ 's' if
+                        (form.fields_count or 0) != 1 else '' }}
+                      </span>
+                      <!-- Submit badge -->
+                      {% if form.has_submit %}
+                      <span
+                        style="
+                          font-size: 10px;
+                          padding: 2px 8px;
+                          border-radius: 20px;
+                          background: #dcfce7;
+                          color: #166534;
+                        "
+                      >
+                        <i class="fa-solid fa-check" style="font-size: 9px"></i>
+                        Has Submit
+                      </span>
+                      {% else %}
+                      <span
+                        style="
+                          font-size: 10px;
+                          padding: 2px 8px;
+                          border-radius: 20px;
+                          background: #fef9c3;
+                          color: #854d0e;
+                        "
+                      >
+                        <i
+                          class="fa-solid fa-triangle-exclamation"
+                          style="font-size: 9px"
+                        ></i>
+                        No Submit
+                      </span>
+                      {% endif %}
                     </div>
+                  </div>
 
-                    <!-- Action URL -->
-                    {% if form.action %}
-                    <div style="
+                  <!-- Action URL -->
+                  {% if form.action %}
+                  <div
+                    style="
                       padding: 7px 16px;
                       font-size: 11px;
                       color: #64748b;
@@ -2715,56 +2825,107 @@
                       border-bottom: 1px solid #f1f5f9;
                       word-break: break-all;
                       font-family: var(--font-code, monospace);
-                    ">
-                      <span style="color:#94a3b8; margin-right:4px;">ACTION</span>{{ form.action }}
-                    </div>
-                    {% endif %}
+                    "
+                  >
+                    <span style="color: #94a3b8; margin-right: 4px">ACTION</span
+                    >{{ form.action }}
+                  </div>
+                  {% endif %}
 
-                    <!-- Visual form fields -->
-                    <div style="padding: 16px 16px 8px;">
-                      {% set visible_fields = [] %}
-                      {% for field in (form.fields or []) %}
-                        {% if field.type not in ['hidden', 'submit', 'button', 'reset', 'image'] %}
-                          {% if visible_fields.append(field) %}{% endif %}
-                        {% endif %}
-                      {% endfor %}
-
-                      {% for field in visible_fields %}
-                      <div style="margin-bottom: 14px;">
-                        <!-- Label row -->
-                        <div style="display:flex; align-items:center; gap:6px; margin-bottom:5px;">
-                          <label style="
+                  <!-- Visual form fields -->
+                  <div style="padding: 16px 16px 8px">
+                    {% set visible_fields = [] %} {% for field in (form.fields
+                    or []) %} {% if field.type not in ['hidden', 'submit',
+                    'button', 'reset', 'image'] %} {% if
+                    visible_fields.append(field) %}{% endif %} {% endif %} {%
+                    endfor %} {% for field in visible_fields %}
+                    <div style="margin-bottom: 14px">
+                      <!-- Label row -->
+                      <div
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 6px;
+                          margin-bottom: 5px;
+                        "
+                      >
+                        <label
+                          style="
                             font-size: 12px;
                             font-weight: 600;
                             color: #374151;
-                          ">
-                            {{ field.label or field.display_name or field.name or field.type or 'Field' }}
-                          </label>
-                          {% if field.required %}
-                          <span style="color:#ef4444; font-size:13px; line-height:1;" title="Required">*</span>
-                          {% endif %}
-                          <!-- Type badge -->
-                          <span style="
-                            font-size: 9px; padding: 1px 6px; border-radius: 10px;
-                            background: #ede9fe; color: #6d28d9; font-weight: 600;
-                            text-transform: uppercase; letter-spacing: 0.3px;
-                          ">{{ field.type }}</span>
-                          {% if not field.has_label %}
-                          <span style="font-size:9px; padding:1px 5px; border-radius:10px; background:#fef3c7; color:#92400e;" title="No label element found">no label</span>
-                          {% endif %}
-                          {% if field.readonly %}
-                          <span style="font-size:9px; padding:1px 5px; border-radius:10px; background:#f1f5f9; color:#64748b;">readonly</span>
-                          {% endif %}
-                          {% if field.disabled %}
-                          <span style="font-size:9px; padding:1px 5px; border-radius:10px; background:#f1f5f9; color:#94a3b8;">disabled</span>
-                          {% endif %}
-                        </div>
-
-                        <!-- Visual input element -->
-                        {% if field.type == 'textarea' %}
-                        <textarea
-                          placeholder="{{ field.placeholder or '' }}"
+                          "
+                        >
+                          {{ field.label or field.display_name or field.name or
+                          field.type or 'Field' }}
+                        </label>
+                        {% if field.required %}
+                        <span
                           style="
+                            color: #ef4444;
+                            font-size: 13px;
+                            line-height: 1;
+                          "
+                          title="Required"
+                          >*</span
+                        >
+                        {% endif %}
+                        <!-- Type badge -->
+                        <span
+                          style="
+                            font-size: 9px;
+                            padding: 1px 6px;
+                            border-radius: 10px;
+                            background: #ede9fe;
+                            color: #6d28d9;
+                            font-weight: 600;
+                            text-transform: uppercase;
+                            letter-spacing: 0.3px;
+                          "
+                          >{{ field.type }}</span
+                        >
+                        {% if not field.has_label %}
+                        <span
+                          style="
+                            font-size: 9px;
+                            padding: 1px 5px;
+                            border-radius: 10px;
+                            background: #fef3c7;
+                            color: #92400e;
+                          "
+                          title="No label element found"
+                          >no label</span
+                        >
+                        {% endif %} {% if field.readonly %}
+                        <span
+                          style="
+                            font-size: 9px;
+                            padding: 1px 5px;
+                            border-radius: 10px;
+                            background: #f1f5f9;
+                            color: #64748b;
+                          "
+                          >readonly</span
+                        >
+                        {% endif %} {% if field.disabled %}
+                        <span
+                          style="
+                            font-size: 9px;
+                            padding: 1px 5px;
+                            border-radius: 10px;
+                            background: #f1f5f9;
+                            color: #94a3b8;
+                          "
+                          >disabled</span
+                        >
+                        {% endif %}
+                      </div>
+
+                      <!-- Visual input element -->
+                      {% if field.type == 'textarea' %}
+                      <textarea
+                        placeholder="{{ field.placeholder or '' }}"
+                        style="
                             width: 100%; box-sizing: border-box;
                             padding: 8px 10px; border: 1.5px solid #d1d5db;
                             border-radius: 7px; font-size: 12px; color: #374151;
@@ -2772,59 +2933,93 @@
                             resize: vertical; min-height: 64px;
                             font-family: inherit; pointer-events: none;
                           "
-                          disabled
-                        ></textarea>
+                        disabled
+                      ></textarea>
 
-                        {% elif field.type == 'select' %}
-                        <select disabled style="
-                          width: 100%; box-sizing: border-box;
-                          padding: 8px 10px; border: 1.5px solid #d1d5db;
-                          border-radius: 7px; font-size: 12px; color: #374151;
-                          background: #fff; pointer-events: none;
+                      {% elif field.type == 'select' %}
+                      <select
+                        disabled
+                        style="
+                          width: 100%;
+                          box-sizing: border-box;
+                          padding: 8px 10px;
+                          border: 1.5px solid #d1d5db;
+                          border-radius: 7px;
+                          font-size: 12px;
+                          color: #374151;
+                          background: #fff;
+                          pointer-events: none;
                           appearance: auto;
-                        ">
-                          {% if field.placeholder %}<option value="">{{ field.placeholder }}</option>{% endif %}
-                          {% for opt in (field.options or [])[:6] %}
-                          <option>{{ opt.text or opt.value }}</option>
-                          {% endfor %}
-                          {% if (field.options or []) | length > 6 %}
-                          <option disabled>… {{ (field.options | length) - 6 }} more options</option>
-                          {% endif %}
-                        </select>
+                        "
+                      >
+                        {% if field.placeholder %}
+                        <option value="">{{ field.placeholder }}</option>
+                        {% endif %} {% for opt in (field.options or [])[:6] %}
+                        <option>{{ opt.text or opt.value }}</option>
+                        {% endfor %} {% if (field.options or []) | length > 6 %}
+                        <option disabled>
+                          … {{ (field.options | length) - 6 }} more options
+                        </option>
+                        {% endif %}
+                      </select>
 
-                        {% elif field.type in ['checkbox', 'radio'] %}
-                        <div style="display:flex; align-items:center; gap:8px; padding: 4px 0;">
-                          <input
-                            type="{{ field.type }}"
-                            disabled
-                            style="width:16px; height:16px; accent-color:#6366f1;"
-                          />
-                          <span style="font-size:12px; color:#64748b;">
-                            {{ field.placeholder or field.display_name or field.name or '' }}
-                          </span>
-                        </div>
-
-                        {% elif field.type == 'range' %}
+                      {% elif field.type in ['checkbox', 'radio'] %}
+                      <div
+                        style="
+                          display: flex;
+                          align-items: center;
+                          gap: 8px;
+                          padding: 4px 0;
+                        "
+                      >
                         <input
-                          type="range" disabled
-                          style="width:100%; accent-color:#6366f1; pointer-events:none;"
+                          type="{{ field.type }}"
+                          disabled
+                          style="
+                            width: 16px;
+                            height: 16px;
+                            accent-color: #6366f1;
+                          "
                         />
+                        <span style="font-size: 12px; color: #64748b">
+                          {{ field.placeholder or field.display_name or
+                          field.name or '' }}
+                        </span>
+                      </div>
 
-                        {% elif field.type == 'color' %}
+                      {% elif field.type == 'range' %}
+                      <input
+                        type="range"
+                        disabled
+                        style="
+                          width: 100%;
+                          accent-color: #6366f1;
+                          pointer-events: none;
+                        "
+                      />
+
+                      {% elif field.type == 'color' %}
+                      <input
+                        type="color"
+                        disabled
+                        value="#6366f1"
+                        style="
+                          height: 32px;
+                          width: 48px;
+                          border: none;
+                          cursor: default;
+                        "
+                      />
+
+                      {% else %}
+                      <!-- text, email, tel, number, password, url, date, search, etc. -->
+                      <div style="position: relative">
                         <input
-                          type="color" disabled value="#6366f1"
-                          style="height:32px; width:48px; border:none; cursor:default;"
-                        />
-
-                        {% else %}
-                        <!-- text, email, tel, number, password, url, date, search, etc. -->
-                        <div style="position:relative;">
-                          <input
-                            type="{{ 'text' if field.type == 'password' else field.type }}"
-                            placeholder="{{ field.placeholder or '' }}"
-                            value="{% if field.type == 'password' %}••••••••{% endif %}"
-                            disabled
-                            style="
+                          type="{{ 'text' if field.type == 'password' else field.type }}"
+                          placeholder="{{ field.placeholder or '' }}"
+                          value="{% if field.type == 'password' %}••••••••{% endif %}"
+                          disabled
+                          style="
                               width: 100%; box-sizing: border-box;
                               padding: 8px {% if field.type == 'password' %}36px{% else %}10px{% endif %} 8px 10px;
                               border: 1.5px solid {% if field.required and not field.has_label %}#fca5a5{% else %}#d1d5db{% endif %};
@@ -2832,44 +3027,80 @@
                               background: {% if field.disabled %}#f9fafb{% elif field.readonly %}#f1f5f9{% else %}#fff{% endif %};
                               pointer-events: none;
                             "
-                          />
-                          {% if field.type == 'password' %}
-                          <i class="fa-solid fa-lock" style="
-                            position:absolute; right:10px; top:50%; transform:translateY(-50%);
-                            color:#94a3b8; font-size:11px;
-                          "></i>
-                          {% endif %}
-                        </div>
-                        {% endif %}
-
-                        <!-- Validation hints row -->
-                        {% if field.maxlength or field.pattern or field.autocomplete %}
-                        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:4px;">
-                          {% if field.maxlength %}
-                          <span style="font-size:10px; color:#64748b;">max {{ field.maxlength }} chars</span>
-                          {% endif %}
-                          {% if field.pattern %}
-                          <span style="font-size:10px; color:#6366f1; font-family:monospace;">pattern: {{ field.pattern[:30] }}</span>
-                          {% endif %}
-                          {% if field.autocomplete and field.autocomplete != 'on' %}
-                          <span style="font-size:10px; color:#64748b;">autocomplete: {{ field.autocomplete }}</span>
-                          {% endif %}
-                        </div>
-                        {% endif %}
-
-                        <!-- name attr hint -->
-                        {% if field.name %}
-                        <div style="font-size:10px; color:#94a3b8; margin-top:2px; font-family: monospace;">
-                          name="{{ field.name }}"{% if field.id %} · id="{{ field.id }}"{% endif %}
-                        </div>
+                        />
+                        {% if field.type == 'password' %}
+                        <i
+                          class="fa-solid fa-lock"
+                          style="
+                            position: absolute;
+                            right: 10px;
+                            top: 50%;
+                            transform: translateY(-50%);
+                            color: #94a3b8;
+                            font-size: 11px;
+                          "
+                        ></i>
                         {% endif %}
                       </div>
-                      {% endfor %}
+                      {% endif %}
 
-                      <!-- Submit button visual -->
-                      {% set submit_field = form.fields | selectattr("type", "in", ["submit","button"]) | first if form.fields else none %}
-                      {% if form.has_submit %}
-                      <button disabled style="
+                      <!-- Validation hints row -->
+                      {% if field.maxlength or field.pattern or
+                      field.autocomplete %}
+                      <div
+                        style="
+                          display: flex;
+                          gap: 6px;
+                          flex-wrap: wrap;
+                          margin-top: 4px;
+                        "
+                      >
+                        {% if field.maxlength %}
+                        <span style="font-size: 10px; color: #64748b"
+                          >max {{ field.maxlength }} chars</span
+                        >
+                        {% endif %} {% if field.pattern %}
+                        <span
+                          style="
+                            font-size: 10px;
+                            color: #6366f1;
+                            font-family: monospace;
+                          "
+                          >pattern: {{ field.pattern[:30] }}</span
+                        >
+                        {% endif %} {% if field.autocomplete and
+                        field.autocomplete != 'on' %}
+                        <span style="font-size: 10px; color: #64748b"
+                          >autocomplete: {{ field.autocomplete }}</span
+                        >
+                        {% endif %}
+                      </div>
+                      {% endif %}
+
+                      <!-- name attr hint -->
+                      {% if field.name %}
+                      <div
+                        style="
+                          font-size: 10px;
+                          color: #94a3b8;
+                          margin-top: 2px;
+                          font-family: monospace;
+                        "
+                      >
+                        name="{{ field.name }}"{% if field.id %} · id="{{
+                        field.id }}"{% endif %}
+                      </div>
+                      {% endif %}
+                    </div>
+                    {% endfor %}
+
+                    <!-- Submit button visual -->
+                    {% set submit_field = form.fields | selectattr("type", "in",
+                    ["submit","button"]) | first if form.fields else none %} {%
+                    if form.has_submit %}
+                    <button
+                      disabled
+                      style="
                         margin-top: 6px;
                         padding: 9px 22px;
                         background: linear-gradient(135deg, #6366f1, #8b5cf6);
@@ -2880,63 +3111,108 @@
                         font-weight: 600;
                         cursor: default;
                         opacity: 0.85;
-                      ">
-                        <i class="fa-solid fa-paper-plane" style="margin-right:6px; font-size:11px;"></i>
-                        {{ form.submit_label or 'Submit' }}
-                      </button>
-                      {% endif %}
-                    </div>
+                      "
+                    >
+                      <i
+                        class="fa-solid fa-paper-plane"
+                        style="margin-right: 6px; font-size: 11px"
+                      ></i>
+                      {{ form.submit_label or 'Submit' }}
+                    </button>
+                    {% endif %}
+                  </div>
 
-                    <!-- Form health score bar (if available) -->
-                    {% if form.form_health_score is not none %}
-                    <div style="
+                  <!-- Form health score bar (if available) -->
+                  {% if form.form_health_score is not none %}
+                  <div
+                    style="
                       padding: 8px 16px;
                       border-top: 1px solid #f1f5f9;
-                      display:flex; align-items:center; gap:10px;
+                      display: flex;
+                      align-items: center;
+                      gap: 10px;
                       background: #fafafa;
-                    ">
-                      <span style="font-size:11px; color:#64748b; white-space:nowrap;">Form Health</span>
-                      <div style="flex:1; height:5px; background:#e2e8f0; border-radius:10px; overflow:hidden;">
-                        <div style="
+                    "
+                  >
+                    <span
+                      style="
+                        font-size: 11px;
+                        color: #64748b;
+                        white-space: nowrap;
+                      "
+                      >Form Health</span
+                    >
+                    <div
+                      style="
+                        flex: 1;
+                        height: 5px;
+                        background: #e2e8f0;
+                        border-radius: 10px;
+                        overflow: hidden;
+                      "
+                    >
+                      <div
+                        style="
                           height:100%; border-radius:10px;
                           width: {{ form.form_health_score }}%;
                           background: {% if form.form_health_score >= 80 %}#22c55e{% elif form.form_health_score >= 50 %}#f59e0b{% else %}#ef4444{% endif %};
                           transition: width 0.4s ease;
-                        "></div>
-                      </div>
-                      <span style="
+                        "
+                      ></div>
+                    </div>
+                    <span
+                      style="
                         font-size:11px; font-weight:700;
                         color: {% if form.form_health_score >= 80 %}#22c55e{% elif form.form_health_score >= 50 %}#f59e0b{% else %}#ef4444{% endif %};
                         min-width: 32px; text-align:right;
-                      ">{{ form.form_health_score | int }}%</span>
-                    </div>
-                    {% endif %}
-
-                    <!-- Form issues -->
-                    {% if form.form_issues and form.form_issues | length > 0 %}
-                    <div style="padding: 0 16px 12px;">
-                      {% for issue in form.form_issues %}
-                      <div style="
-                        display:flex; align-items:flex-start; gap:8px;
-                        padding: 6px 0; border-top: 1px dashed #f1f5f9; font-size:11px;
-                      ">
-                        <i class="fa-solid {% if issue.severity == 'high' %}fa-circle-xmark{% elif issue.severity == 'medium' %}fa-triangle-exclamation{% else %}fa-circle-info{% endif %}"
-                          style="color:{% if issue.severity == 'high' %}#ef4444{% elif issue.severity == 'medium' %}#f59e0b{% else %}#6366f1{% endif %};
-                          margin-top:1px; flex-shrink:0; font-size:12px;">
-                        </i>
-                        <span style="color:#475569;">{{ issue.detail }}</span>
-                      </div>
-                      {% endfor %}
-                    </div>
-                    {% endif %}
-
+                      "
+                      >{{ form.form_health_score | int }}%</span
+                    >
                   </div>
-                  {% endfor %}
+                  {% endif %}
 
-                {% else %}
-                <div style="text-align:center; padding:32px 0; color:#94a3b8;">
-                  <i class="fa-solid fa-wpforms" style="font-size:28px; opacity:0.3; display:block; margin-bottom:10px;"></i>
-                  <span style="font-size:13px;">No visible forms detected on this page.</span>
+                  <!-- Form issues -->
+                  {% if form.form_issues and form.form_issues | length > 0 %}
+                  <div style="padding: 0 16px 12px">
+                    {% for issue in form.form_issues %}
+                    <div
+                      style="
+                        display: flex;
+                        align-items: flex-start;
+                        gap: 8px;
+                        padding: 6px 0;
+                        border-top: 1px dashed #f1f5f9;
+                        font-size: 11px;
+                      "
+                    >
+                      <i
+                        class="fa-solid {% if issue.severity == 'high' %}fa-circle-xmark{% elif issue.severity == 'medium' %}fa-triangle-exclamation{% else %}fa-circle-info{% endif %}"
+                        style="color:{% if issue.severity == 'high' %}#ef4444{% elif issue.severity == 'medium' %}#f59e0b{% else %}#6366f1{% endif %};
+                          margin-top:1px; flex-shrink:0; font-size:12px;"
+                      >
+                      </i>
+                      <span style="color: #475569">{{ issue.detail }}</span>
+                    </div>
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                </div>
+                {% endfor %} {% else %}
+                <div
+                  style="text-align: center; padding: 32px 0; color: #94a3b8"
+                >
+                  <i
+                    class="fa-solid fa-wpforms"
+                    style="
+                      font-size: 28px;
+                      opacity: 0.3;
+                      display: block;
+                      margin-bottom: 10px;
+                    "
+                  ></i>
+                  <span style="font-size: 13px"
+                    >No visible forms detected on this page.</span
+                  >
                 </div>
                 {% endif %}
               </div>
@@ -3190,8 +3466,10 @@
         setTimeout(() => {
           if (modalContent.querySelector(`#tab-btn-ui-${index}`)) {
             switchModalTab("ui", index);
+            // Initialise UI tab KPI + table after switch
+            if (window.initUiTab) window.initUiTab(index);
           }
-        }, 50);
+        }, 80);
       }
 
       function closeModal() {
@@ -3206,14 +3484,21 @@
         const contentArea = document.getElementById("modalContent");
         contentArea
           .querySelectorAll(".tab-pane")
-          .forEach((p) => p.classList.remove("active"));
+          .forEach((p) => {
+            p.classList.remove("active");
+            p.style.display = "none";
+          });
         contentArea
           .querySelectorAll(".tab-btn")
           .forEach((b) => b.classList.remove("active"));
         const targetPane = contentArea.querySelector(
           `#tab-content-${tabName}-${index}`,
         );
-        if (targetPane) targetPane.classList.add("active");
+        if (targetPane) {
+          targetPane.classList.add("active");
+          // UI tab needs flex layout; all others use block
+          targetPane.style.display = tabName === "ui" ? "flex" : "block";
+        }
         const targetBtn = contentArea.querySelector(
           `#tab-btn-${tabName}-${index}`,
         );
@@ -3597,6 +3882,458 @@
         // Initialize
         refreshPagination();
       })();
+    </script>
+    <script id="ui-tab-script">
+      // Guard: only define once even if template re-renders
+      if (!window.__uiTabInit) {
+        window.__uiTabInit = true;
+
+        // ── State per modal index ──
+        const _ui = {}; // { idx: { elements, filtered, page, perPage, activeTag } }
+
+        const TAG_META = {
+          a: { icon: "fa-link", color: "#6366f1", label: "Links" },
+          button: {
+            icon: "fa-hand-pointer",
+            color: "#ec4899",
+            label: "Buttons",
+          },
+          input: {
+            icon: "fa-pen-to-square",
+            color: "#f59e0b",
+            label: "Inputs",
+          },
+          select: { icon: "fa-caret-down", color: "#10b981", label: "Selects" },
+          img: { icon: "fa-image", color: "#3b82f6", label: "Images" },
+          form: { icon: "fa-wpforms", color: "#8b5cf6", label: "Forms" },
+          nav: { icon: "fa-bars", color: "#64748b", label: "Nav" },
+        };
+
+        function _tagColor(tag) {
+          return TAG_META[tag] ? TAG_META[tag].color : "#94a3b8";
+        }
+        function _tagIcon(tag) {
+          return TAG_META[tag] ? TAG_META[tag].icon : "fa-code";
+        }
+
+        // ── Initialise a specific modal index ──
+        window.initUiTab = function (idx) {
+          const raw = document.getElementById(`ui-data-${idx}`);
+          const sumRaw = document.getElementById(`ui-summary-${idx}`);
+          if (!raw) return;
+
+          let elements = [];
+          let summary = {};
+          try {
+            elements = JSON.parse(raw.textContent || "[]");
+          } catch (e) {}
+          try {
+            summary = JSON.parse(sumRaw ? sumRaw.textContent : "{}");
+          } catch (e) {}
+
+          _ui[idx] = {
+            elements: elements,
+            filtered: elements,
+            page: 1,
+            perPage: 25,
+            activeTag: "all",
+            search: "",
+          };
+
+          _renderKPI(idx, elements, summary);
+          _renderChips(idx, elements);
+          _renderTable(idx);
+        };
+
+        // ── KPI strip ──
+        function _renderKPI(idx, elements, summary) {
+          const container = document.getElementById(`ui-kpi-${idx}`);
+          if (!container) return;
+
+          // Count by tag type
+          const tagCounts = {};
+          elements.forEach((el) => {
+            const t = (el.tag || "?").toLowerCase();
+            tagCounts[t] = (tagCounts[t] || 0) + 1;
+          });
+
+          const visibleCount = elements.filter((e) => e.visible).length;
+          const hiddenCount = elements.length - visibleCount;
+          const noTextCount = elements.filter(
+            (e) => !e.text || e.text.trim() === "",
+          ).length;
+
+          const kpis = [
+            {
+              label: "Total Elements",
+              value: elements.length,
+              icon: "fa-layer-group",
+              color: "#6366f1",
+              bg: "rgba(99,102,241,0.08)",
+            },
+            {
+              label: "Links (a)",
+              value: tagCounts["a"] || summary.links || 0,
+              icon: "fa-link",
+              color: "#6366f1",
+              bg: "rgba(99,102,241,0.06)",
+            },
+            {
+              label: "Buttons",
+              value: tagCounts["button"] || summary.buttons || 0,
+              icon: "fa-hand-pointer",
+              color: "#ec4899",
+              bg: "rgba(236,72,153,0.06)",
+            },
+            {
+              label: "Inputs",
+              value:
+                (tagCounts["input"] || 0) +
+                (tagCounts["select"] || 0) +
+                (tagCounts["textarea"] || 0),
+              icon: "fa-pen-to-square",
+              color: "#f59e0b",
+              bg: "rgba(245,158,11,0.06)",
+            },
+            {
+              label: "Hidden",
+              value: hiddenCount,
+              icon: "fa-eye-slash",
+              color: hiddenCount > 0 ? "#ef4444" : "#10b981",
+              bg:
+                hiddenCount > 0
+                  ? "rgba(239,68,68,0.06)"
+                  : "rgba(16,185,129,0.06)",
+            },
+          ];
+
+          container.innerHTML = kpis
+            .map(
+              (k) => `
+      <div style="
+        background: ${k.bg};
+        border: 1px solid ${k.color}22;
+        border-radius: 8px;
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      ">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <i class="fa-solid ${k.icon}" style="font-size:11px;color:${k.color};"></i>
+          <span style="font-size:10px;font-weight:700;color:var(--text-muted);
+                       text-transform:uppercase;letter-spacing:0.6px;">${k.label}</span>
+        </div>
+        <div style="font-size:20px;font-weight:800;color:${k.color};
+                    font-family:var(--font-code);line-height:1;">${k.value}</div>
+      </div>
+    `,
+            )
+            .join("");
+        }
+
+        // ── Type filter chips ──
+        function _renderChips(idx, elements) {
+          const container = document.getElementById(`ui-chips-${idx}`);
+          if (!container) return;
+
+          const tagCounts = {};
+          elements.forEach((el) => {
+            const t = (el.tag || "?").toLowerCase();
+            tagCounts[t] = (tagCounts[t] || 0) + 1;
+          });
+
+          // Always show "All" first, then top tags by count
+          const sorted = Object.entries(tagCounts)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 7);
+
+          const chips = [["all", elements.length], ...sorted];
+
+          container.innerHTML = chips
+            .map(([tag, count]) => {
+              const meta = TAG_META[tag];
+              const color = meta ? meta.color : "#64748b";
+              const label = meta ? meta.label : tag.toUpperCase();
+              const icon = meta ? meta.icon : "fa-code";
+              const isAll = tag === "all";
+
+              return `
+        <button
+          onclick="uiSetTag(${idx}, '${tag}')"
+          id="ui-chip-${idx}-${tag}"
+          style="
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1.5px solid ${isAll ? "#6366f1" : color + "44"};
+            background: ${isAll ? "#6366f1" : color + "11"};
+            color: ${isAll ? "white" : color};
+            transition: all 0.15s;
+            font-family: var(--font-main);
+          "
+        >
+          <i class="fa-solid ${isAll ? "fa-asterisk" : icon}" style="font-size:9px;"></i>
+          ${isAll ? "All" : label}
+          <span style="
+            background: ${isAll ? "rgba(255,255,255,0.25)" : color + "22"};
+            padding: 1px 5px;
+            border-radius: 10px;
+            font-size: 10px;
+          ">${count}</span>
+        </button>
+      `;
+            })
+            .join("");
+        }
+
+        // ── Render table for current state ──
+        function _renderTable(idx) {
+          const state = _ui[idx];
+          if (!state) return;
+
+          const tbody = document.getElementById(`ui-tbody-${idx}`);
+          const empty = document.getElementById(`ui-empty-${idx}`);
+          const pgInfo = document.getElementById(`ui-pg-info-${idx}`);
+          const pgBtns = document.getElementById(`ui-pg-btns-${idx}`);
+          const counter = document.getElementById(`ui-count-${idx}`);
+          if (!tbody) return;
+
+          const { filtered, page, perPage } = state;
+          const total = filtered.length;
+          const totalPgs = Math.max(1, Math.ceil(total / perPage));
+          const safePage = Math.min(page, totalPgs);
+          state.page = safePage;
+
+          const start = (safePage - 1) * perPage;
+          const slice = filtered.slice(start, start + perPage);
+
+          // Counter label
+          if (counter)
+            counter.textContent = `${total} element${total !== 1 ? "s" : ""}`;
+
+          if (total === 0) {
+            tbody.innerHTML = "";
+            if (empty) empty.style.display = "block";
+          } else {
+            if (empty) empty.style.display = "none";
+
+            tbody.innerHTML = slice
+              .map((el) => {
+                const tag     = (el.tag  || "?").toLowerCase();
+                const color   = _tagColor(tag);
+                const icon    = _tagIcon(tag);
+                const text    = el.text && el.text.trim() ? el.text.trim() : null;
+                const elType  = el.type || null;
+                const elId    = el.id   || null;
+                const visible = el.visible;
+
+                // Type/ID cell — show input type badge + element id (actual crawler fields)
+                let typeIdHtml = "";
+                if (elType) {
+                  typeIdHtml += `<span style="display:inline-block;background:#f1f5f9;color:#475569;padding:1px 6px;border-radius:4px;font-size:10px;font-family:var(--font-code);margin-bottom:${elId ? "3px" : "0"};">${elType}</span>`;
+                }
+                if (elId) {
+                  typeIdHtml += `<span style="display:block;font-size:10px;font-family:var(--font-code);color:#6366f1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="#${elId}">#${elId}</span>`;
+                }
+                if (!typeIdHtml) typeIdHtml = `<span style="color:#cbd5e1;font-size:11px;">—</span>`;
+
+                return `
+          <tr style="border-bottom:1px solid #f1f5f9;transition:background 0.1s;"
+              onmouseover="this.style.background='#f8fafc'"
+              onmouseout="this.style.background=''">
+            <td style="padding:9px 14px;vertical-align:middle;">
+              <span style="
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                background: ${color}11;
+                border: 1px solid ${color}33;
+                color: ${color};
+                padding: 3px 8px;
+                border-radius: 5px;
+                font-family: var(--font-code);
+                font-size: 11px;
+                font-weight: 700;
+              ">
+                <i class="fa-solid ${icon}" style="font-size:9px;"></i>
+                ${tag}
+              </span>
+            </td>
+            <td style="padding:9px 14px;vertical-align:middle;max-width:240px;">
+              ${
+                text
+                  ? `<span style="font-size:12px;color:var(--text-main);font-weight:500;
+                               display:block;overflow:hidden;text-overflow:ellipsis;
+                               white-space:nowrap;" title="${text.replace(/"/g, "&quot;")}">${text}</span>`
+                  : `<span style="font-size:11px;color:#cbd5e1;font-style:italic;">No text</span>`
+              }
+            </td>
+            <td style="padding:9px 14px;vertical-align:middle;max-width:140px;">${typeIdHtml}</td>
+            <td style="padding:9px 14px;text-align:center;vertical-align:middle;">
+              ${
+                visible
+                  ? `<span style="display:inline-flex;align-items:center;gap:4px;
+                              background:rgba(16,185,129,0.08);color:#10b981;
+                              padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">
+                    <i class="fa-solid fa-eye" style="font-size:9px;"></i>Yes
+                   </span>`
+                  : `<span style="display:inline-flex;align-items:center;gap:4px;
+                              background:rgba(100,116,139,0.08);color:#94a3b8;
+                              padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">
+                    <i class="fa-solid fa-eye-slash" style="font-size:9px;"></i>Hidden
+                   </span>`
+              }
+            </td>
+          </tr>
+        `;
+              })
+              .join("");
+          }
+
+          // Pagination info
+          if (pgInfo) {
+            if (total === 0) {
+              pgInfo.textContent = "";
+            } else {
+              pgInfo.textContent = `Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total}`;
+            }
+          }
+
+          // Pagination buttons
+          if (pgBtns) {
+            if (totalPgs <= 1) {
+              pgBtns.innerHTML = "";
+            } else {
+              const btnStyle = (active) => `
+          min-width:28px;height:28px;
+          border:1.5px solid ${active ? "#6366f1" : "var(--border)"};
+          background:${active ? "#6366f1" : "var(--card-bg)"};
+          color:${active ? "white" : "var(--text-muted)"};
+          border-radius:6px;
+          font-size:11px;font-weight:600;
+          cursor:pointer;
+          font-family:var(--font-main);
+          transition:all 0.15s;
+          display:inline-flex;align-items:center;justify-content:center;
+          padding:0 6px;
+        `;
+
+              let html = `
+          <button style="${btnStyle(false)}opacity:${safePage === 1 ? 0.4 : 1};cursor:${safePage === 1 ? "not-allowed" : "pointer"};"
+                  onclick="uiGotoPage(${idx},${safePage - 1})" ${safePage === 1 ? "disabled" : ""}>
+            <i class="fa-solid fa-chevron-left" style="font-size:9px;"></i>
+          </button>
+        `;
+
+              // Smart page range: always show first, last, current ±1
+              const pages = new Set(
+                [1, totalPgs, safePage, safePage - 1, safePage + 1].filter(
+                  (p) => p >= 1 && p <= totalPgs,
+                ),
+              );
+              const sorted = [...pages].sort((a, b) => a - b);
+              let prev = null;
+              for (const p of sorted) {
+                if (prev !== null && p - prev > 1) {
+                  html += `<span style="font-size:11px;color:var(--text-muted);padding:0 3px;">…</span>`;
+                }
+                html += `<button style="${btnStyle(p === safePage)}" onclick="uiGotoPage(${idx},${p})">${p}</button>`;
+                prev = p;
+              }
+
+              html += `
+          <button style="${btnStyle(false)}opacity:${safePage === totalPgs ? 0.4 : 1};cursor:${safePage === totalPgs ? "not-allowed" : "pointer"};"
+                  onclick="uiGotoPage(${idx},${safePage + 1})" ${safePage === totalPgs ? "disabled" : ""}>
+            <i class="fa-solid fa-chevron-right" style="font-size:9px;"></i>
+          </button>
+        `;
+              pgBtns.innerHTML = html;
+            }
+          }
+        }
+
+        // ── Apply filter (search + tag) ──
+        function _applyFilter(idx) {
+          const state = _ui[idx];
+          if (!state) return;
+
+          const search = (state.search || "").toLowerCase().trim();
+          const activeTag = state.activeTag || "all";
+
+          state.filtered = state.elements.filter((el) => {
+            const tag  = (el.tag  || "").toLowerCase();
+            const text = (el.text || "").toLowerCase();
+            const type = (el.type || "").toLowerCase();
+            const id   = (el.id   || "").toLowerCase();
+
+            const tagMatch = activeTag === "all" || tag === activeTag;
+            const srchMatch =
+              !search ||
+              text.includes(search) ||
+              tag.includes(search)  ||
+              type.includes(search) ||
+              id.includes(search);
+
+            return tagMatch && srchMatch;
+          });
+
+          state.page = 1;
+
+          // Update chip styles
+          const chips = document.getElementById(`ui-chips-${idx}`);
+          if (chips) {
+            chips.querySelectorAll("button").forEach((btn) => {
+              const btnTag = btn.id.replace(`ui-chip-${idx}-`, "");
+              const isActive = btnTag === activeTag;
+              const meta = TAG_META[btnTag];
+              const color = meta ? meta.color : "#64748b";
+              btn.style.background = isActive
+                ? btnTag === "all"
+                  ? "#6366f1"
+                  : color
+                : color + "11";
+              btn.style.color = isActive ? "white" : color;
+              btn.style.borderColor = isActive
+                ? btnTag === "all"
+                  ? "#6366f1"
+                  : color
+                : color + "44";
+            });
+          }
+
+          _renderTable(idx);
+        }
+
+        // ── Public API ──
+
+        window.uiFilter = function (idx) {
+          const input = document.getElementById(`ui-search-${idx}`);
+          if (_ui[idx]) {
+            _ui[idx].search = input ? input.value : "";
+            _applyFilter(idx);
+          }
+        };
+
+        window.uiSetTag = function (idx, tag) {
+          if (_ui[idx]) {
+            _ui[idx].activeTag = tag;
+            _applyFilter(idx);
+          }
+        };
+
+        window.uiGotoPage = function (idx, pg) {
+          if (_ui[idx]) {
+            _ui[idx].page = pg;
+            _renderTable(idx);
+          }
+        };
+      }
     </script>
   </body>
 </html>
