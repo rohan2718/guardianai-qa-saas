@@ -629,7 +629,7 @@ def login():
                     action   = "login_2fa_success",
                     extra_data = {"username": user.username},
                 )
-                next_page = "/" if user.email else url_for("reset.add_email", next="/")
+                next_page = "/" if user.email else "/add-email?next=/"
                 return redirect(next_page)
 
             write_audit_log(
