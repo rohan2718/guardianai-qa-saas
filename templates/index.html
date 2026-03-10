@@ -2381,6 +2381,81 @@
                           >
                         </div>
 
+                        {% set ui_s = p.get('ui_summary') or {} %} {% if ui_s %}
+                        <div style="margin-bottom: 8px">
+                          <div
+                            style="
+                              display: flex;
+                              align-items: center;
+                              gap: 6px;
+                              margin-bottom: 5px;
+                            "
+                          >
+                            <span
+                              style="
+                                font-size: 10px;
+                                font-weight: 700;
+                                color: var(--text-muted);
+                                text-transform: uppercase;
+                                letter-spacing: 0.5px;
+                              "
+                              >UI Elements</span
+                            >
+                            <span
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                gap: 3px;
+                                background: rgba(16, 185, 129, 0.08);
+                                border: 1px solid rgba(16, 185, 129, 0.2);
+                                color: #059669;
+                                font-size: 9px;
+                                font-weight: 700;
+                                padding: 1px 6px;
+                                border-radius: 10px;
+                                text-transform: uppercase;
+                                letter-spacing: 0.4px;
+                              "
+                            >
+                              <i
+                                class="fa-solid fa-eye"
+                                style="font-size: 7px"
+                              ></i>
+                              Visible only
+                            </span>
+                          </div>
+                          <div style="display: flex; gap: 6px; flex-wrap: wrap">
+                            {% for icon, label, val in [ ('fa-link', 'Links',
+                            ui_s.get('links', 0)), ('fa-hand-pointer',
+                            'Buttons', ui_s.get('buttons', 0)),
+                            ('fa-pen-to-square', 'Inputs', ui_s.get('inputs',
+                            0)), ('fa-image', 'Images', ui_s.get('images', 0)),
+                            ] %}
+                            <span
+                              style="
+                                display: inline-flex;
+                                align-items: center;
+                                gap: 4px;
+                                background: #f8fafc;
+                                border: 1px solid #e2e8f0;
+                                padding: 2px 7px;
+                                border-radius: 6px;
+                                font-size: 11px;
+                                font-weight: 600;
+                                color: #475569;
+                              "
+                            >
+                              <i
+                                class="fa-solid {{ icon }}"
+                                style="font-size: 8px; color: #94a3b8"
+                              ></i
+                              >{{ val }} {{ label }}
+                            </span>
+                            {% endfor %}
+                          </div>
+                        </div>
+                        {% endif %}
+
                         <button
                           class="inspect-btn"
                           onclick="openModal({{ loop.index0 }})"
@@ -2650,7 +2725,6 @@
                         <th style="width: 90px">Tag</th>
                         <th>Text / Label</th>
                         <th style="width: 140px">Type / ID</th>
-                        <th style="width: 70px; text-align: center">Visible</th>
                       </tr>
                     </thead>
                     <tbody id="ui-tbody-{{ loop.index0 }}"></tbody>
@@ -3277,7 +3351,7 @@
                     style="width: 100%; height: 100%"
                   ></div>
                   <textarea id="graph-data-{{ loop.index0 }}" class="hidden">
-{{ (item.connected_pages or []) | tojson }}</textarea
+      {{ (item.connected_pages or []) | tojson }}</textarea
                   >
                   <input
                     type="hidden"
@@ -3482,12 +3556,10 @@
 
       function switchModalTab(tabName, index) {
         const contentArea = document.getElementById("modalContent");
-        contentArea
-          .querySelectorAll(".tab-pane")
-          .forEach((p) => {
-            p.classList.remove("active");
-            p.style.display = "none";
-          });
+        contentArea.querySelectorAll(".tab-pane").forEach((p) => {
+          p.classList.remove("active");
+          p.style.display = "none";
+        });
         contentArea
           .querySelectorAll(".tab-btn")
           .forEach((b) => b.classList.remove("active"));
@@ -3946,71 +4018,83 @@
         };
 
         // ── KPI strip ──
+        // CHANGED: "Total Elements" → "Visible Elements" (all elements are now
+        //          pre-filtered to visible-only by the crawler).
+        //          "Hidden" KPI removed — always 0 after crawler fix, pure noise.
+        //          "Images" KPI added — surfaces summary.images from crawler.
+        //          Tooltips added via title="" on each card.
         function _renderKPI(idx, elements, summary) {
           const container = document.getElementById(`ui-kpi-${idx}`);
           if (!container) return;
 
-          // Count by tag type
+          // Count by tag type from the elements array
           const tagCounts = {};
           elements.forEach((el) => {
             const t = (el.tag || "?").toLowerCase();
             tagCounts[t] = (tagCounts[t] || 0) + 1;
           });
 
-          const visibleCount = elements.filter((e) => e.visible).length;
-          const hiddenCount = elements.length - visibleCount;
-          const noTextCount = elements.filter(
-            (e) => !e.text || e.text.trim() === "",
-          ).length;
+          // All elements are now visible by construction (crawler pre-filters).
+          // summary fields from updated crawler: total_visible, links, buttons, inputs, images.
+          const totalVisible = summary.total_visible || elements.length;
+          const linksCount = tagCounts["a"] || summary.links || 0;
+          const buttonsCount = tagCounts["button"] || summary.buttons || 0;
+          const inputsCount =
+            (tagCounts["input"] || 0) +
+              (tagCounts["select"] || 0) +
+              (tagCounts["textarea"] || 0) ||
+            summary.inputs ||
+            0;
+          const imagesCount = summary.images || 0;
 
           const kpis = [
             {
-              label: "Total Elements",
-              value: elements.length,
+              label: "Visible Elements",
+              value: totalVisible,
               icon: "fa-layer-group",
               color: "#6366f1",
               bg: "rgba(99,102,241,0.08)",
+              title:
+                "Total interactive elements visible to the user on this page",
             },
             {
-              label: "Links (a)",
-              value: tagCounts["a"] || summary.links || 0,
+              label: "Links",
+              value: linksCount,
               icon: "fa-link",
               color: "#6366f1",
               bg: "rgba(99,102,241,0.06)",
+              title: "Visible <a href> anchor links",
             },
             {
               label: "Buttons",
-              value: tagCounts["button"] || summary.buttons || 0,
+              value: buttonsCount,
               icon: "fa-hand-pointer",
               color: "#ec4899",
               bg: "rgba(236,72,153,0.06)",
+              title: "Visible <button> and [role=button] elements",
             },
             {
               label: "Inputs",
-              value:
-                (tagCounts["input"] || 0) +
-                (tagCounts["select"] || 0) +
-                (tagCounts["textarea"] || 0),
+              value: inputsCount,
               icon: "fa-pen-to-square",
               color: "#f59e0b",
               bg: "rgba(245,158,11,0.06)",
+              title: "Visible <input>, <select>, <textarea> fields",
             },
             {
-              label: "Hidden",
-              value: hiddenCount,
-              icon: "fa-eye-slash",
-              color: hiddenCount > 0 ? "#ef4444" : "#10b981",
-              bg:
-                hiddenCount > 0
-                  ? "rgba(239,68,68,0.06)"
-                  : "rgba(16,185,129,0.06)",
+              label: "Images",
+              value: imagesCount,
+              icon: "fa-image",
+              color: "#3b82f6",
+              bg: "rgba(59,130,246,0.06)",
+              title: "Visible <img> elements",
             },
           ];
 
           container.innerHTML = kpis
             .map(
               (k) => `
-      <div style="
+      <div title="${k.title}" style="
         background: ${k.bg};
         border: 1px solid ${k.color}22;
         border-radius: 8px;
@@ -4018,6 +4102,7 @@
         display: flex;
         flex-direction: column;
         gap: 4px;
+        cursor: default;
       ">
         <div style="display:flex;align-items:center;gap:6px;">
           <i class="fa-solid ${k.icon}" style="font-size:11px;color:${k.color};"></i>
@@ -4043,7 +4128,6 @@
             tagCounts[t] = (tagCounts[t] || 0) + 1;
           });
 
-          // Always show "All" first, then top tags by count
           const sorted = Object.entries(tagCounts)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 7);
@@ -4113,7 +4197,6 @@
           const start = (safePage - 1) * perPage;
           const slice = filtered.slice(start, start + perPage);
 
-          // Counter label
           if (counter)
             counter.textContent = `${total} element${total !== 1 ? "s" : ""}`;
 
@@ -4125,15 +4208,18 @@
 
             tbody.innerHTML = slice
               .map((el) => {
-                const tag     = (el.tag  || "?").toLowerCase();
-                const color   = _tagColor(tag);
-                const icon    = _tagIcon(tag);
-                const text    = el.text && el.text.trim() ? el.text.trim() : null;
-                const elType  = el.type || null;
-                const elId    = el.id   || null;
-                const visible = el.visible;
+                const tag = (el.tag || "?").toLowerCase();
+                const color = _tagColor(tag);
+                const icon = _tagIcon(tag);
+                const text = el.text && el.text.trim() ? el.text.trim() : null;
+                const elType = el.type || null;
+                const elId = el.id || null;
 
-                // Type/ID cell — show input type badge + element id (actual crawler fields)
+                // CHANGED: added href + ariaLabel fallbacks for icon-only elements
+                const elHref = el.href || null;
+                const elAria = el.ariaLabel || null;
+
+                // Type / ID cell
                 let typeIdHtml = "";
                 if (elType) {
                   typeIdHtml += `<span style="display:inline-block;background:#f1f5f9;color:#475569;padding:1px 6px;border-radius:4px;font-size:10px;font-family:var(--font-code);margin-bottom:${elId ? "3px" : "0"};">${elType}</span>`;
@@ -4141,8 +4227,33 @@
                 if (elId) {
                   typeIdHtml += `<span style="display:block;font-size:10px;font-family:var(--font-code);color:#6366f1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="#${elId}">#${elId}</span>`;
                 }
-                if (!typeIdHtml) typeIdHtml = `<span style="color:#cbd5e1;font-size:11px;">—</span>`;
+                if (!typeIdHtml)
+                  typeIdHtml = `<span style="color:#cbd5e1;font-size:11px;">—</span>`;
 
+                // CHANGED: Text / Label cell — smarter fallback chain:
+                //   primary:   visible inner text
+                //   secondary: href (for icon-only links)
+                //   tertiary:  aria-label
+                //   fallback:  "No text" placeholder
+                let labelHtml;
+                if (text) {
+                  labelHtml = `<span style="font-size:12px;color:var(--text-main);font-weight:500;
+                                display:block;overflow:hidden;text-overflow:ellipsis;
+                                white-space:nowrap;" title="${text.replace(/"/g, "&quot;")}">${text}</span>`;
+                } else if (elHref) {
+                  labelHtml = `<span style="font-size:11px;color:#6366f1;font-family:var(--font-code);
+                                overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                                display:block;" title="${elHref}">${elHref.substring(0, 60)}</span>`;
+                } else if (elAria) {
+                  labelHtml = `<span style="font-size:11px;color:#64748b;font-style:italic;"
+                                title="${elAria}">${elAria}</span>`;
+                } else {
+                  labelHtml = `<span style="font-size:11px;color:#cbd5e1;font-style:italic;">No text</span>`;
+                }
+
+                // CHANGED: "Visible" 4th column removed — all elements are visible
+                //          by construction after the crawler fix, so the column
+                //          was a green ✓ on every single row (noise, not signal).
                 return `
           <tr style="border-bottom:1px solid #f1f5f9;transition:background 0.1s;"
               onmouseover="this.style.background='#f8fafc'"
@@ -4166,30 +4277,9 @@
               </span>
             </td>
             <td style="padding:9px 14px;vertical-align:middle;max-width:240px;">
-              ${
-                text
-                  ? `<span style="font-size:12px;color:var(--text-main);font-weight:500;
-                               display:block;overflow:hidden;text-overflow:ellipsis;
-                               white-space:nowrap;" title="${text.replace(/"/g, "&quot;")}">${text}</span>`
-                  : `<span style="font-size:11px;color:#cbd5e1;font-style:italic;">No text</span>`
-              }
+              ${labelHtml}
             </td>
             <td style="padding:9px 14px;vertical-align:middle;max-width:140px;">${typeIdHtml}</td>
-            <td style="padding:9px 14px;text-align:center;vertical-align:middle;">
-              ${
-                visible
-                  ? `<span style="display:inline-flex;align-items:center;gap:4px;
-                              background:rgba(16,185,129,0.08);color:#10b981;
-                              padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">
-                    <i class="fa-solid fa-eye" style="font-size:9px;"></i>Yes
-                   </span>`
-                  : `<span style="display:inline-flex;align-items:center;gap:4px;
-                              background:rgba(100,116,139,0.08);color:#94a3b8;
-                              padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;">
-                    <i class="fa-solid fa-eye-slash" style="font-size:9px;"></i>Hidden
-                   </span>`
-              }
-            </td>
           </tr>
         `;
               })
@@ -4198,11 +4288,10 @@
 
           // Pagination info
           if (pgInfo) {
-            if (total === 0) {
-              pgInfo.textContent = "";
-            } else {
-              pgInfo.textContent = `Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total}`;
-            }
+            pgInfo.textContent =
+              total === 0
+                ? ""
+                : `Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total}`;
           }
 
           // Pagination buttons
@@ -4231,15 +4320,14 @@
           </button>
         `;
 
-              // Smart page range: always show first, last, current ±1
               const pages = new Set(
                 [1, totalPgs, safePage, safePage - 1, safePage + 1].filter(
                   (p) => p >= 1 && p <= totalPgs,
                 ),
               );
-              const sorted = [...pages].sort((a, b) => a - b);
+              const sortedPgs = [...pages].sort((a, b) => a - b);
               let prev = null;
-              for (const p of sorted) {
+              for (const p of sortedPgs) {
                 if (prev !== null && p - prev > 1) {
                   html += `<span style="font-size:11px;color:var(--text-muted);padding:0 3px;">…</span>`;
                 }
@@ -4259,6 +4347,7 @@
         }
 
         // ── Apply filter (search + tag) ──
+        // CHANGED: search now also matches against href and ariaLabel fields
         function _applyFilter(idx) {
           const state = _ui[idx];
           if (!state) return;
@@ -4267,25 +4356,29 @@
           const activeTag = state.activeTag || "all";
 
           state.filtered = state.elements.filter((el) => {
-            const tag  = (el.tag  || "").toLowerCase();
+            const tag = (el.tag || "").toLowerCase();
             const text = (el.text || "").toLowerCase();
             const type = (el.type || "").toLowerCase();
-            const id   = (el.id   || "").toLowerCase();
+            const id = (el.id || "").toLowerCase();
+            const href = (el.href || "").toLowerCase();
+            const aria = (el.ariaLabel || "").toLowerCase();
 
             const tagMatch = activeTag === "all" || tag === activeTag;
             const srchMatch =
               !search ||
               text.includes(search) ||
-              tag.includes(search)  ||
+              tag.includes(search) ||
               type.includes(search) ||
-              id.includes(search);
+              id.includes(search) ||
+              href.includes(search) ||
+              aria.includes(search);
 
             return tagMatch && srchMatch;
           });
 
           state.page = 1;
 
-          // Update chip styles
+          // Update chip active styles
           const chips = document.getElementById(`ui-chips-${idx}`);
           if (chips) {
             chips.querySelectorAll("button").forEach((btn) => {

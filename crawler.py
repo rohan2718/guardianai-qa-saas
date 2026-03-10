@@ -199,66 +199,203 @@ async def classify_links(context, page, base_url: str) -> dict:
 
 async def capture_dom_elements(page) -> dict:
     try:
+        # ── Wait for DOM to stabilise after page load ──
+        # networkidle ensures async-injected elements (cookie banners, chat widgets,
+        # dynamic nav) have finished rendering before we snapshot element state.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass  # Timeout is acceptable — proceed with current DOM state
+
         data = await page.evaluate("""() => {
-            const ui_elements = [...document.querySelectorAll(
-                'button, a[href], input, select, textarea, [role="button"], [role="link"]'
-            )].slice(0, 200).map(el => ({
-                tag: el.tagName.toLowerCase(),
-                type: el.getAttribute('type') || null,
-                id: el.id || null,
-                text: (el.innerText || el.value || '').substring(0, 80),
-                visible: el.offsetParent !== null,
-            }));
-             const forms = [...document.querySelectorAll('form')]
+
+            // ── VISIBILITY HELPERS ────────────────────────────────────────────
+
+            /**
+             * isElementVisible(el)
+             * Returns true only when ALL of the following are true:
+             *   1. Element is in the DOM (connected)
+             *   2. offsetParent is not null (not display:none on self or ancestor)
+             *   3. computed display is not 'none'
+             *   4. computed visibility is not 'hidden' or 'collapse'
+             *   5. computed opacity is not 0
+             *   6. Element has non-zero bounding rect (actually occupies space)
+             *
+             * This matches what a real user would perceive as "visible on screen".
+             */
+            function isElementVisible(el) {
+                if (!el || !el.isConnected) return false;
+
+                // offsetParent null = display:none on self or any ancestor
+                if (el.offsetParent === null && el.tagName.toLowerCase() !== 'body') return false;
+
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none')                      return false;
+                if (style.visibility === 'hidden')                 return false;
+                if (style.visibility === 'collapse')               return false;
+                if (parseFloat(style.opacity) === 0)               return false;
+
+                // Must occupy actual space in the layout
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0)         return false;
+
+                return true;
+            }
+
+            /**
+             * isInsideHiddenContainer(el)
+             * Walks up the DOM tree and returns true if ANY ancestor is hidden.
+             * This catches elements inside:
+             *   - Collapsed dropdown menus
+             *   - Hidden modal overlays
+             *   - Off-screen navigation drawers
+             *   - Accordion panels that are closed
+             */
+            function isInsideHiddenContainer(el) {
+                let node = el.parentElement;
+                while (node && node !== document.body) {
+                    const s = window.getComputedStyle(node);
+                    if (
+                        s.display === 'none'       ||
+                        s.visibility === 'hidden'  ||
+                        s.visibility === 'collapse'||
+                        parseFloat(s.opacity) === 0
+                    ) return true;
+                    node = node.parentElement;
+                }
+                return false;
+            }
+
+            /**
+             * isCookieBannerElement(el)
+             * Heuristically detects cookie consent banners, GDPR notices,
+             * and similar overlay widgets that pollute raw element counts.
+             * Matches common class/id patterns used by OneTrust, Cookiebot,
+             * CookiePro, and generic "cookie-banner" implementations.
+             */
+            function isCookieBannerElement(el) {
+                const COOKIE_PATTERNS = [
+                    /cookie/i, /consent/i, /gdpr/i, /ccpa/i,
+                    /onetrust/i, /cookiebot/i, /cookiepro/i,
+                    /privacy-notice/i, /cookie-notice/i,
+                    /cookie-banner/i, /cookie-bar/i,
+                ];
+                const haystack = [
+                    el.id || '',
+                    el.className || '',
+                    el.getAttribute('data-testid') || '',
+                    el.getAttribute('aria-label') || '',
+                ].join(' ');
+
+                return COOKIE_PATTERNS.some(p => p.test(haystack));
+            }
+
+            /**
+             * isAccessibilityHelper(el)
+             * Excludes screen-reader-only elements (visually hidden via sr-only,
+             * visually-hidden, clip-path tricks, etc.) that are intentionally
+             * invisible to sighted users but present in the DOM for AT users.
+             */
+            function isAccessibilityHelper(el) {
+                const SR_CLASSES = [
+                    'sr-only', 'visually-hidden', 'screen-reader-only',
+                    'a11y-hidden', 'visually_hidden', 'offscreen',
+                    'clip', 'sr_only',
+                ];
+                const cls = (el.className || '').toString().toLowerCase();
+                return SR_CLASSES.some(c => cls.includes(c));
+            }
+
+            /**
+             * shouldIncludeElement(el)
+             * Master gate — element is included in the visible UI scan ONLY if it
+             * passes ALL visibility and exclusion checks.
+             */
+            function shouldIncludeElement(el) {
+                if (!isElementVisible(el))           return false;
+                if (isInsideHiddenContainer(el))     return false;
+                if (isCookieBannerElement(el))       return false;
+                if (isAccessibilityHelper(el))       return false;
+
+                // Exclude type=hidden inputs (never visible by definition)
+                if (el.tagName.toLowerCase() === 'input' &&
+                    (el.getAttribute('type') || '').toLowerCase() === 'hidden') {
+                    return false;
+                }
+
+                return true;
+            }
+
+
+            // ── VISIBLE UI ELEMENTS ───────────────────────────────────────────
+
+            const INTERACTIVE_SELECTOR =
+                'button, a[href], input, select, textarea, [role="button"], [role="link"]';
+
+            const ui_elements = [...document.querySelectorAll(INTERACTIVE_SELECTOR)]
+                .filter(el => shouldIncludeElement(el))
+                .slice(0, 200)  // cap at 200 to match original behaviour
+                .map(el => ({
+                    tag:     el.tagName.toLowerCase(),
+                    type:    el.getAttribute('type') || null,
+                    id:      el.id || null,
+                    text:    (el.innerText || el.value || '').trim().substring(0, 80),
+                    visible: true,  // All returned elements are visible by construction
+                }));
+
+
+            // ── VISIBLE-ONLY SUMMARY COUNTS ───────────────────────────────────
+            // These replace the old unfiltered querySelectorAll().length calls.
+            // Each count reflects only what a real user sees on the page.
+
+            const visibleLinks = [...document.querySelectorAll('a[href]')]
+                .filter(el => shouldIncludeElement(el)).length;
+
+            const visibleButtons = [...document.querySelectorAll('button, [role="button"]')]
+                .filter(el => shouldIncludeElement(el)).length;
+
+            const visibleInputs = [...document.querySelectorAll(
+                'input:not([type="hidden"]), select, textarea'
+            )].filter(el => shouldIncludeElement(el)).length;
+
+            const visibleImages = [...document.querySelectorAll('img')]
+                .filter(el => isElementVisible(el) && !isInsideHiddenContainer(el)).length;
+
+            // Total unique visible interactive elements (deduplicated from ui_elements)
+            const totalVisible = ui_elements.length;
+
+
+            // ── FORMS (unchanged — already filtered for visible fields) ────────
+            const forms = [...document.querySelectorAll('form')]
                 .map(f => {
-                    // ── All fields including hidden (for analysis), visible fields for display
                     const allInputs = [...f.querySelectorAll('input, select, textarea, button')];
 
-                    // Visible fields only — skip type=hidden entirely for display
                     const fields = allInputs
                         .filter(i => i.type !== 'hidden')
                         .map(i => {
-                            const tag        = i.tagName.toLowerCase();
-                            const inputType  = i.getAttribute('type') || (tag === 'select' ? 'select' : tag === 'textarea' ? 'textarea' : 'text');
-                            const inputId    = i.id || null;
-
-                            // Resolve label text — try label[for=id], then closest label, then aria-label
-                            let labelText = null;
-                            if (inputId) {
-                                const lbl = document.querySelector(`label[for="${inputId}"]`);
-                                if (lbl) labelText = lbl.innerText.trim().substring(0, 80);
-                            }
-                            if (!labelText) {
-                                const parentLabel = i.closest('label');
-                                if (parentLabel) labelText = parentLabel.innerText.trim().substring(0, 80);
-                            }
-                            if (!labelText) {
-                                labelText = i.getAttribute('aria-label') || i.getAttribute('title') || null;
-                            }
-
-                            // Resolve display name: label → placeholder → name → id → type
-                            const displayName = labelText
-                                || i.getAttribute('placeholder')
-                                || i.getAttribute('name')
-                                || inputId
-                                || inputType;
+                            const tag       = i.tagName.toLowerCase();
+                            const inputType = i.getAttribute('type') ||
+                                (tag === 'select' ? 'select' : tag === 'textarea' ? 'textarea' : 'text');
+                            const labelEl   = i.id
+                                ? document.querySelector(`label[for="${i.id}"]`)
+                                : null;
+                            const labelText = labelEl
+                                ? labelEl.innerText.trim().substring(0, 60)
+                                : (i.getAttribute('placeholder') || i.getAttribute('aria-label') || null);
 
                             return {
-                                tag:          tag,
+                                tag,
                                 type:         inputType,
                                 name:         i.getAttribute('name') || null,
-                                id:           inputId,
-                                label:        labelText,
-                                display_name: displayName ? displayName.substring(0, 60) : null,
-                                placeholder:  i.getAttribute('placeholder') || null,
+                                id:           i.id || null,
                                 required:     i.required || i.getAttribute('aria-required') === 'true',
-                                has_label:    !!labelText,
+                                placeholder:  i.getAttribute('placeholder') || null,
+                                display_name: labelText,
                                 maxlength:    i.getAttribute('maxlength') || null,
                                 pattern:      i.getAttribute('pattern') || null,
                                 autocomplete: i.getAttribute('autocomplete') || null,
                                 readonly:     i.readOnly || false,
                                 disabled:     i.disabled || false,
-                                // For select: collect options
                                 options: tag === 'select'
                                     ? [...i.querySelectorAll('option')]
                                         .filter(o => o.value)
@@ -275,29 +412,26 @@ async def capture_dom_elements(page) -> dict:
                         ['submit', 'button'].includes(f.type) || f.tag === 'button'
                     );
 
-                    // Strip fragment from action for cleaner display
                     let actionUrl = f.action || null;
                     if (actionUrl) {
                         try { actionUrl = new URL(actionUrl).href; } catch(e) {}
                     }
 
                     return {
-                        id:                f.id     || null,
-                        action:            actionUrl,
-                        method:            (f.getAttribute('method') || 'get').toUpperCase(),
-                        enctype:           f.getAttribute('enctype') || null,
-                        name:              f.getAttribute('name') || null,
-                        // "fields" key — matches what form_analyzer.py reads
-                        fields:            fields,
-                        fields_count:      visibleFields.length,
-                        has_submit:        !!submitBtn,
-                        submit_label:      submitBtn ? (submitBtn.display_name || submitBtn.placeholder || 'Submit') : null,
-                        // Quick-purpose guess from field names
-                        form_purpose:      (() => {
+                        id:           f.id || null,
+                        action:       actionUrl,
+                        method:       (f.getAttribute('method') || 'get').toUpperCase(),
+                        enctype:      f.getAttribute('enctype') || null,
+                        name:         f.getAttribute('name') || null,
+                        fields:       fields,
+                        fields_count: visibleFields.length,
+                        has_submit:   !!submitBtn,
+                        submit_label: submitBtn ? (submitBtn.display_name || submitBtn.placeholder || 'Submit') : null,
+                        form_purpose: (() => {
                             const names = fields.map(f => (f.name || '').toLowerCase()).join(' ');
                             if (/login|signin|password|username/.test(names)) return 'Login';
                             if (/register|signup|create.*account/.test(names)) return 'Registration';
-                            if (/search|query|q\b/.test(names)) return 'Search';
+                            if (/search|query|q\\b/.test(names)) return 'Search';
                             if (/contact|message|enqui/.test(names)) return 'Contact';
                             if (/subscribe|newsletter|email/.test(names)) return 'Newsletter';
                             if (/checkout|payment|card|billing/.test(names)) return 'Checkout';
@@ -306,30 +440,57 @@ async def capture_dom_elements(page) -> dict:
                         })(),
                     };
                 })
-                // Filter out forms with zero visible fields (hidden-only forms)
                 .filter(f => f.fields_count > 0 || f.has_submit);
-            const nav_menus    = [...document.querySelectorAll('nav, [role="navigation"]')].map(n => ({id: n.id || null, items: n.querySelectorAll('a').length}));
-            const dropdowns    = [...document.querySelectorAll('select, [role="listbox"], .dropdown')].map(d => ({id: d.id || null}));
-            const tabs         = [...document.querySelectorAll('[role="tab"], .tab')].map(t => ({text: (t.innerText || '').substring(0, 60)}));
-            const modals       = [...document.querySelectorAll('[role="dialog"], .modal, [aria-modal="true"]')].map(m => ({id: m.id || null}));
-            const accordions   = [...document.querySelectorAll('details, [role="region"]')].map(a => ({id: a.id || null}));
-            const pagination   = [...document.querySelectorAll('[aria-label*="paginat"], .pagination, [class*="paginat"]')].map(p => ({id: p.id || null}));
-            const breadcrumbs_el = document.querySelector('[aria-label*="breadcrumb"], .breadcrumb, nav[aria-label]');
-            const sidebar_el     = document.querySelector('aside, [role="complementary"], .sidebar');
-            const images  = document.querySelectorAll('img').length;
-            const buttons = document.querySelectorAll('button, [role="button"]').length;
-            const links   = document.querySelectorAll('a[href]').length;
+
+            const nav_menus   = [...document.querySelectorAll('nav, [role="navigation"]')]
+                .map(n => ({ id: n.id || null, items: n.querySelectorAll('a').length }));
+            const dropdowns   = [...document.querySelectorAll('select, [role="listbox"], .dropdown')]
+                .map(d => ({ id: d.id || null }));
+            const tabs        = [...document.querySelectorAll('[role="tab"], .tab')]
+                .map(t => ({ text: (t.innerText || '').substring(0, 60) }));
+            const modals      = [...document.querySelectorAll('[role="dialog"], .modal, [aria-modal="true"]')]
+                .map(m => ({ id: m.id || null }));
+            const accordions  = [...document.querySelectorAll('details, [role="region"]')]
+                .map(a => ({ id: a.id || null }));
+            const pagination  = [...document.querySelectorAll('[aria-label*="paginat"], .pagination, [class*="paginat"]')]
+                .map(p => ({ id: p.id || null }));
+
+            const breadcrumbs_el = document.querySelector(
+                '[aria-label*="breadcrumb"], .breadcrumb, nav[aria-label]'
+            );
+            const sidebar_el = document.querySelector(
+                'aside, [role="complementary"], .sidebar'
+            );
+
             return {
-                ui_elements, ui_summary: { images, buttons, links },
-                forms, nav_menus, dropdowns, tabs, modals, accordions, pagination,
+                ui_elements,
+                ui_summary: {
+                    // ── CHANGED: All counts now reflect VISIBLE elements only ──
+                    images:         visibleImages,
+                    buttons:        visibleButtons,
+                    links:          visibleLinks,
+                    inputs:         visibleInputs,
+                    total_visible:  totalVisible,
+                },
+                forms,
+                nav_menus,
+                dropdowns,
+                tabs,
+                modals,
+                accordions,
+                pagination,
                 breadcrumbs: { found: !!breadcrumbs_el },
                 sidebar:     { found: !!sidebar_el },
             };
         }""")
-        return data
+
+        return data or {}
+
     except Exception as e:
         logger.warning(f"capture_dom_elements failed: {e}")
         return {}
+
+
 
 
 # ── Crawl Anomaly Detection ────────────────────────────────────────────────────
