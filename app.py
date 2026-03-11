@@ -33,14 +33,11 @@ import json
 import logging
 import os
 from datetime import datetime, timedelta, UTC
-from io import BytesIO
 import ipaddress
 import socket
 from urllib.parse import urlparse
 import markdown
 import pandas as pd
-import pyotp
-import qrcode
 import redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from flask import (Flask, abort, redirect, render_template,
@@ -576,7 +573,6 @@ def register():
             username           = username,
             email              = email,
             password           = generate_password_hash(password),
-            otp_secret         = pyotp.random_base32(),
             is_2fa_enabled     = False,
             plan               = "free",
             scan_limit         = 5,
@@ -604,85 +600,30 @@ def register():
 def login():
     reset_success = request.args.get("reset_success")
 
-    # ── 2FA verification flow ────────────────────────────────────────────────
-    if session.get("2fa_user_id"):
-        user_id = session["2fa_user_id"]
-        user    = db.session.get(User, user_id)
-        if not user:
-            session.clear()
-            return redirect("/login")
-
-        totp = pyotp.TOTP(user.otp_secret)
-
-        if request.method == "POST":
-            otp = request.form.get("otp", "")
-            if otp and totp.verify(otp):
-                user.is_2fa_enabled = True
-                user.last_login_at  = datetime.now(UTC)
-                db.session.commit()
-                login_user(user)
-                session.pop("2fa_user_id", None)
-                _delete_qr(user_id)
-                write_audit_log(
-                    db, AuditLog,
-                    user_id  = user.id,
-                    action   = "login_2fa_success",
-                    extra_data = {"username": user.username},
-                )
-                next_page = "/" if user.email else "/add-email?next=/"
-                return redirect(next_page)
-
-            write_audit_log(
-                db, AuditLog,
-                user_id  = user_id,
-                action   = "login_2fa_failed",
-                extra_data = {"username": user.username if user else "unknown"},
-            )
-            qr = _get_qr(user_id)
-            return render_template("login.html", show_otp=True, qr=qr, error="Invalid OTP")
-
-        qr = _get_qr(user_id)
-        return render_template("login.html", show_otp=True, qr=qr)
-
-    # ── Credential check ─────────────────────────────────────────────────────
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         user     = User.query.filter_by(username=username).first()
 
         if user and not user._is_active:
-            write_audit_log(
-                db, AuditLog,
-                user_id  = user.id,
-                action   = "login_suspended",
-                extra_data = {"username": username},
-            )
+            write_audit_log(db, AuditLog, user_id=user.id, action="login_suspended",
+                            extra_data={"username": username})
             return render_template("login.html", error="Invalid credentials")
 
         if not user or not check_password_hash(user.password, password):
-            write_audit_log(
-                db, AuditLog,
-                user_id  = user.id if user else None,
-                action   = "login_failed",
-                extra_data = {"username": username},
-            )
+            write_audit_log(db, AuditLog, user_id=user.id if user else None,
+                            action="login_failed", extra_data={"username": username})
             return render_template("login.html", error="Invalid credentials")
 
-        totp = pyotp.TOTP(user.otp_secret)
-        session["2fa_user_id"] = user.id
+        user.last_login_at = datetime.now(UTC)
+        db.session.commit()
+        login_user(user)
 
-        if user.is_2fa_enabled:
-            return render_template("login.html", show_otp=True)
+        write_audit_log(db, AuditLog, user_id=user.id, action="login_success",
+                        extra_data={"username": user.username})
 
-        # First-time 2FA setup — generate QR, store in Redis
-        uri = totp.provisioning_uri(name=user.username, issuer_name="GuardianAI")
-        img = qrcode.make(uri)
-        buffer = BytesIO()
-        img.save(buffer, format="PNG")
-        qr_base64 = base64.b64encode(buffer.getvalue()).decode()
-        _store_qr(user.id, qr_base64)
-
-        return render_template("login.html", show_otp=True, qr=qr_base64)
+        next_page = request.args.get("next") or ("/" if user.email else "/add-email?next=/")
+        return redirect(next_page)
 
     return render_template("login.html", reset_success=reset_success)
 
@@ -690,8 +631,8 @@ def login():
 @login_required
 def logout():
     logout_user()
+    session.pop("2fa_user_id", None)
     return redirect("/login")
-
 
 # ════════════════════════════════════════════════════════════════════════════════
 # MAIN APP ROUTES
