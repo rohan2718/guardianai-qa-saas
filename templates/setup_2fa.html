@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <title>Guardian AI | Setup 2FA</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --primary: #6366f1; --secondary: #ec4899; --accent: #8b5cf6;
+        --bg-body: #f0f4f8; --text-main: #0f172a; --text-muted: #64748b;
+        --border: #e2e8f0; --font-main: "Inter", sans-serif;
+        --font-code: "JetBrains Mono", monospace;
+        --radius-md: 12px; --radius-lg: 16px;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: var(--font-main); background: var(--bg-body);
+        color: var(--text-main); min-height: 100vh;
+        display: flex; align-items: center; justify-content: center;
+        background-image: radial-gradient(circle at 20% 20%, rgba(99,102,241,0.08) 0%, transparent 40%),
+                          radial-gradient(circle at 80% 80%, rgba(236,72,153,0.08) 0%, transparent 40%);
+      }
+      .card {
+        background: white; border: 1px solid var(--border);
+        border-radius: var(--radius-lg); padding: 40px 36px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.08); width: 100%; max-width: 460px;
+        border-top: 3px solid var(--primary);
+      }
+      .icon-wrap {
+        width: 60px; height: 60px; border-radius: 16px; margin: 0 auto 20px;
+        background: linear-gradient(135deg, rgba(99,102,241,0.1), rgba(139,92,246,0.1));
+        border: 1px solid rgba(99,102,241,0.18);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 26px; color: var(--primary);
+      }
+      h2 { font-size: 22px; font-weight: 800; text-align: center; margin-bottom: 8px; }
+      .subtitle { font-size: 13px; color: var(--text-muted); text-align: center; line-height: 1.6; margin-bottom: 28px; }
+      .error-msg {
+        background: rgba(239,68,68,0.07); border: 1px solid rgba(239,68,68,0.2);
+        color: #dc2626; padding: 12px 14px; border-radius: 8px; font-size: 13px;
+        margin-bottom: 20px; display: flex; align-items: center; gap: 10px;
+      }
+      .qr-wrap {
+        text-align: center; margin-bottom: 24px;
+      }
+      .qr-wrap img {
+        display: inline-block; padding: 14px; background: white;
+        border: 2px solid var(--border); border-radius: 12px;
+        width: 188px; height: 188px;
+      }
+      .qr-hint {
+        font-size: 12px; color: var(--text-muted); margin-top: 10px;
+        display: flex; align-items: center; justify-content: center; gap: 5px;
+      }
+      label { font-size: 13px; font-weight: 600; display: block; margin-bottom: 8px; }
+      input[type="text"] {
+        width: 100%; padding: 14px; border: 1.5px solid var(--border);
+        border-radius: 8px; font-size: 24px; font-weight: 700;
+        text-align: center; letter-spacing: 10px; font-family: var(--font-code);
+        background: #f8fafc; color: var(--text-main);
+        transition: border-color 0.15s; outline: none;
+      }
+      input[type="text"]:focus { border-color: var(--primary); background: white; }
+      .btn-submit {
+        width: 100%; padding: 14px; border: none; border-radius: 8px; margin-top: 16px;
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: white; font-size: 15px; font-weight: 700; cursor: pointer;
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        transition: opacity 0.15s, transform 0.15s;
+      }
+      .btn-submit:hover { opacity: 0.92; transform: translateY(-1px); }
+      .back-link {
+        display: block; text-align: center; margin-top: 18px;
+        font-size: 13px; color: var(--text-muted); text-decoration: none;
+      }
+      .back-link:hover { color: var(--primary); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="icon-wrap"><i class="fa-solid fa-qrcode"></i></div>
+      <h2>Setup Authenticator</h2>
+      <p class="subtitle">
+        Scan the QR code with <strong>Google Authenticator</strong> or <strong>Authy</strong>,
+        then enter the 6-digit code to confirm setup.
+      </p>
+
+      {% if error %}
+      <div class="error-msg">
+        <i class="fa-solid fa-circle-exclamation"></i> {{ error }}
+      </div>
+      {% endif %}
+
+      {% if qr %}
+      <div class="qr-wrap">
+        <img src="data:image/png;base64,{{ qr }}" alt="2FA QR Code" />
+        <p class="qr-hint">
+          <i class="fa-solid fa-clock"></i> QR code expires in 5 minutes
+        </p>
+      </div>
+      {% endif %}
+
+      <form method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+        <label for="otp">Enter the 6-digit code from your app</label>
+        <input type="text" id="otp" name="otp"
+               placeholder="000000" maxlength="6" pattern="[0-9]{6}"
+               required autofocus autocomplete="off" inputmode="numeric" />
+        <button type="submit" class="btn-submit">
+          <i class="fa-solid fa-shield-check"></i> Verify &amp; Enable 2FA
+        </button>
+      </form>
+
+      <a href="/profile" class="back-link">← Cancel, back to profile</a>
+    </div>
+  </body>
+</html>

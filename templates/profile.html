@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="csrf-token" content="{{ csrf_token() }}" />
+    <title>Guardian AI | Profile & Security</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --primary: #6366f1; --secondary: #ec4899; --accent: #8b5cf6;
+        --bg-body: #f0f4f8; --text-main: #0f172a; --text-muted: #64748b;
+        --border: #e2e8f0; --success: #10b981; --danger: #ef4444; --warning: #f59e0b;
+        --card-bg: #ffffff;
+        --font-main: "Inter", sans-serif; --font-code: "JetBrains Mono", monospace;
+        --radius-sm: 8px; --radius-md: 12px; --radius-lg: 16px;
+        --shadow-sm: 0 1px 3px rgba(0,0,0,0.06); --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: var(--font-main); background: var(--bg-body);
+        color: var(--text-main); min-height: 100vh; display: flex; overflow: hidden;
+        background-image: radial-gradient(circle at 5% 10%, rgba(99,102,241,0.07) 0%, transparent 30%),
+                          radial-gradient(circle at 95% 90%, rgba(236,72,153,0.07) 0%, transparent 30%);
+      }
+      .main-content { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; height: 100vh; }
+      .topbar {
+        height: 64px; background: rgba(255,255,255,0.92); backdrop-filter: blur(16px);
+        border-bottom: 1px solid var(--border); display: flex; align-items: center;
+        padding: 0 28px; gap: 14px; flex-shrink: 0;
+      }
+      .topbar-title { font-size: 15px; font-weight: 700; color: var(--text-main); }
+      .content-scroll { flex: 1; overflow-y: auto; padding: 32px 28px; }
+      .page-header { margin-bottom: 28px; }
+      .page-header h1 { font-size: 22px; font-weight: 800; color: var(--text-main); }
+      .page-header p { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+      .card {
+        background: var(--card-bg); border: 1px solid var(--border);
+        border-radius: var(--radius-lg); padding: 24px; box-shadow: var(--shadow-sm);
+        margin-bottom: 20px;
+      }
+      .card-accent { border-top: 3px solid var(--primary); }
+      .badge {
+        display: inline-flex; align-items: center; padding: 3px 10px;
+        border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+      }
+      .badge-free    { background: rgba(100,116,139,0.1); color: #64748b; }
+      .badge-pro     { background: rgba(99,102,241,0.1);  color: #6366f1; }
+      .badge-enterprise { background: rgba(236,72,153,0.1); color: #ec4899; }
+      .alert {
+        padding: 14px 18px; border-radius: 10px; font-size: 14px;
+        display: flex; align-items: center; gap: 10px; margin-bottom: 24px;
+      }
+      .alert-success { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.25); color: #059669; }
+      .alert-danger  { background: rgba(239,68,68,0.07);  border: 1px solid rgba(239,68,68,0.2);  color: #dc2626; }
+      .btn {
+        display: inline-flex; align-items: center; gap: 8px;
+        padding: 10px 20px; border-radius: 8px; font-size: 13px;
+        font-weight: 600; cursor: pointer; text-decoration: none; border: none;
+        transition: all 0.15s;
+      }
+      .btn-primary {
+        background: linear-gradient(135deg, var(--primary), var(--accent));
+        color: white;
+      }
+      .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+      .btn-danger {
+        background: rgba(239,68,68,0.08); color: #dc2626;
+        border: 1.5px solid rgba(239,68,68,0.25);
+      }
+      .btn-danger:hover { background: rgba(239,68,68,0.15); }
+      .hamburger-btn {
+        display: none; background: none; border: none; cursor: pointer;
+        color: var(--text-muted); font-size: 18px; padding: 6px;
+      }
+      @media (max-width: 768px) { .hamburger-btn { display: block; } }
+    </style>
+  </head>
+  <body>
+    {% include "partials/sidebar.html" %}
+
+    <div class="main-content">
+      <header class="topbar">
+        <button class="hamburger-btn" onclick="toggleSidebar()">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div class="topbar-title">Profile & Security</div>
+      </header>
+
+      <div class="content-scroll">
+        <div style="max-width: 680px; margin: 0 auto;">
+
+          <div class="page-header">
+            <h1><i class="fa-solid fa-user-gear" style="color:var(--primary);margin-right:10px;"></i>Profile & Security</h1>
+            <p>Manage your account details and security settings.</p>
+          </div>
+
+          {% if two_fa_enabled %}
+          <div class="alert alert-success">
+            <i class="fa-solid fa-shield-check"></i>
+            Two-factor authentication has been enabled on your account.
+          </div>
+          {% endif %}
+          {% if two_fa_disabled %}
+          <div class="alert alert-danger">
+            <i class="fa-solid fa-shield-xmark"></i>
+            Two-factor authentication has been disabled.
+          </div>
+          {% endif %}
+
+          <!-- Account Info -->
+          <div class="card card-accent">
+            <div style="display:flex;align-items:center;gap:16px;margin-bottom:22px;">
+              <div style="width:56px;height:56px;border-radius:14px;flex-shrink:0;
+                          background:linear-gradient(135deg,rgba(99,102,241,0.12),rgba(139,92,246,0.12));
+                          border:1px solid rgba(99,102,241,0.18);
+                          display:flex;align-items:center;justify-content:center;
+                          font-size:24px;font-weight:800;color:var(--primary);">
+                {{ current_user.username[0]|upper }}
+              </div>
+              <div style="flex:1;">
+                <div style="font-size:18px;font-weight:800;color:var(--text-main);">{{ current_user.username }}</div>
+                <div style="font-size:13px;color:var(--text-muted);margin-top:3px;">{{ current_user.email or 'No email set' }}</div>
+              </div>
+              <span class="badge badge-{{ current_user.plan }}">{{ current_user.plan }}</span>
+            </div>
+
+            <table style="font-size:13px;width:100%;border-collapse:collapse;">
+              <tr>
+                <td style="color:var(--text-muted);padding:8px 0;width:150px;font-weight:500;">Member since</td>
+                <td style="font-weight:600;">{{ current_user.created_at.strftime('%d %b %Y') if current_user.created_at else '—' }}</td>
+              </tr>
+              <tr>
+                <td style="color:var(--text-muted);padding:8px 0;font-weight:500;">Last login</td>
+                <td style="font-weight:600;">{{ current_user.last_login_at.strftime('%d %b %Y %H:%M') if current_user.last_login_at else 'Never' }}</td>
+              </tr>
+              <tr>
+                <td style="color:var(--text-muted);padding:8px 0;font-weight:500;">2FA Status</td>
+                <td>
+                  {% if current_user.is_2fa_enabled %}
+                  <span style="color:#059669;font-weight:700;"><i class="fa-solid fa-shield-check" style="margin-right:5px;"></i>Enabled</span>
+                  {% else %}
+                  <span style="color:#dc2626;font-weight:700;"><i class="fa-solid fa-shield-xmark" style="margin-right:5px;"></i>Disabled</span>
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td style="color:var(--text-muted);padding:8px 0;font-weight:500;">Scan limit</td>
+                <td style="font-weight:600;">{{ plan_limits.scans_per_day or 'Unlimited' }} per day</td>
+              </tr>
+            </table>
+          </div>
+
+          <!-- 2FA Card -->
+          <div class="card">
+            <div style="font-size:15px;font-weight:700;color:var(--text-main);margin-bottom:6px;">
+              <i class="fa-solid fa-mobile-screen-button" style="color:var(--primary);margin-right:8px;"></i>
+              Two-Factor Authentication
+            </div>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:20px;line-height:1.6;">
+              Protect your account with a time-based one-time code from your authenticator app (Google Authenticator, Authy, etc.) required on every login.
+            </p>
+
+            {% if current_user.is_2fa_enabled %}
+            <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;
+                        background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.2);
+                        border-radius:10px;margin-bottom:16px;">
+              <i class="fa-solid fa-circle-check" style="color:#059669;font-size:16px;"></i>
+              <span style="font-size:13px;font-weight:600;color:#059669;">2FA is currently active on your account</span>
+            </div>
+            <form method="POST" action="/disable-2fa"
+                  onsubmit="return confirm('Disable two-factor authentication? Your account will be less secure.');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+              <button type="submit" class="btn btn-danger">
+                <i class="fa-solid fa-shield-xmark"></i> Disable 2FA
+              </button>
+            </form>
+            {% else %}
+            <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;
+                        background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.2);
+                        border-radius:10px;margin-bottom:16px;">
+              <i class="fa-solid fa-triangle-exclamation" style="color:#d97706;font-size:16px;"></i>
+              <span style="font-size:13px;font-weight:600;color:#d97706;">2FA is not enabled — your account has reduced security</span>
+            </div>
+            <a href="/setup-2fa" class="btn btn-primary">
+              <i class="fa-solid fa-qrcode"></i> Enable 2FA
+            </a>
+            {% endif %}
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function toggleSidebar() {
+        document.getElementById('sidebar')?.classList.toggle('active');
+        document.querySelector('.sidebar-overlay')?.classList.toggle('active');
+      }
+    </script>
+  </body>
+</html>

@@ -35,6 +35,9 @@ import os
 from datetime import datetime, timedelta, UTC
 import ipaddress
 import socket
+import pyotp
+import qrcode
+import io
 from urllib.parse import urlparse
 import markdown
 import pandas as pd
@@ -372,7 +375,7 @@ def enrich_run_context(run: TestRun) -> dict:
                 "security_score":          r.security_score,
                 "functional_score":        r.functional_score,
                 "ui_form_score":           r.ui_form_score,
-                "load_time":               r.load_time,
+                "load_time": r.load_time if r.load_time is not None else None,  # leave as-is
                 "fcp_ms":                  r.fcp_ms,
                 "lcp_ms":                  r.lcp_ms,
                 "ttfb_ms":                 r.ttfb_ms,
@@ -595,12 +598,44 @@ def register():
     return render_template("register.html")
 
 
+import pyotp  # add to imports at top
+
 @app.route("/login", methods=["GET", "POST"])
 @limiter.limit("20 per minute")
 def login():
     reset_success = request.args.get("reset_success")
 
     if request.method == "POST":
+        # ── Step 2: TOTP verification (2FA users) ──────────────────────────
+        if "2fa_user_id" in session:
+            user = db.session.get(User, session["2fa_user_id"])
+            if not user:
+                session.pop("2fa_user_id", None)
+                return render_template("login.html", error="Session expired. Please log in again.")
+
+            otp = request.form.get("otp", "").strip()
+            totp = pyotp.TOTP(user.otp_secret)
+
+            if not totp.verify(otp, valid_window=1):
+                write_audit_log(db, AuditLog, user_id=user.id, action="2fa_failed",
+                                extra_data={"username": user.username})
+                return render_template("login.html", show_otp=True,
+                                       error="Invalid or expired code. Try again.")
+
+            # ✅ 2FA passed
+            session.pop("2fa_user_id", None)
+            _delete_qr(user.id)
+            user.last_login_at = datetime.now(UTC)
+            db.session.commit()
+            login_user(user)
+
+            write_audit_log(db, AuditLog, user_id=user.id, action="login_success_2fa",
+                            extra_data={"username": user.username})
+
+            next_page = request.args.get("next") or ("/" if user.email else "/add-email?next=/")
+            return redirect(next_page)
+
+        # ── Step 1: Username + password ────────────────────────────────────
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         user     = User.query.filter_by(username=username).first()
@@ -615,6 +650,19 @@ def login():
                             action="login_failed", extra_data={"username": username})
             return render_template("login.html", error="Invalid credentials")
 
+        # ── 2FA required? ──────────────────────────────────────────────────
+        if user.is_2fa_enabled and user.otp_secret:
+            session["2fa_user_id"] = user.id
+
+            # Generate and cache QR only on first scan (new setup)
+            # For returning users, no QR needed — they already have the app configured
+            qr_b64 = _get_qr(user.id)   # will be None for existing 2FA users
+
+            write_audit_log(db, AuditLog, user_id=user.id, action="login_2fa_challenged",
+                            extra_data={"username": user.username})
+            return render_template("login.html", show_otp=True, qr=qr_b64)
+
+        # ── No 2FA — direct login ──────────────────────────────────────────
         user.last_login_at = datetime.now(UTC)
         db.session.commit()
         login_user(user)
@@ -625,8 +673,91 @@ def login():
         next_page = request.args.get("next") or ("/" if user.email else "/add-email?next=/")
         return redirect(next_page)
 
+    # ── GET: if mid-2FA session exists, show OTP screen ───────────────────
+    if "2fa_user_id" in session:
+        return render_template("login.html", show_otp=True)
+
     return render_template("login.html", reset_success=reset_success)
 
+# ════════════════════════════════════════════════════════════════════════════════
+# PROFILE & 2FA MANAGEMENT
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.route("/profile")
+@login_required
+def profile():
+    two_fa_enabled  = request.args.get("2fa_enabled")
+    two_fa_disabled = request.args.get("2fa_disabled")
+    return render_template(
+        "profile.html",
+        two_fa_enabled  = two_fa_enabled,
+        two_fa_disabled = two_fa_disabled,
+        plan_limits     = _plan_limits(current_user),
+        history         = load_history_from_db(),   # ← ADD THIS LINE
+    )
+@app.route("/setup-2fa", methods=["GET", "POST"])
+@login_required
+def setup_2fa():
+    import pyotp, qrcode, io
+
+    if request.method == "POST":
+        otp    = request.form.get("otp", "").strip()
+        secret = session.get("pending_2fa_secret")
+
+        if not secret:
+            return redirect("/setup-2fa")
+
+        totp = pyotp.TOTP(secret)
+        if not totp.verify(otp, valid_window=1):
+            write_audit_log(db, AuditLog, user_id=current_user.id,
+                            action="2fa_setup_failed", extra_data={})
+            return render_template(
+                "setup_2fa.html",
+                error="Code didn't match. Please scan the QR again and retry.",
+                qr=_get_qr(current_user.id),
+            )
+
+        # ✅ Confirmed — persist to DB, clear temp state
+        current_user.otp_secret     = secret
+        current_user.is_2fa_enabled = True
+        db.session.commit()
+        session.pop("pending_2fa_secret", None)
+        _delete_qr(current_user.id)
+
+        write_audit_log(db, AuditLog, user_id=current_user.id,
+                        action="2fa_enabled", extra_data={})
+        return redirect("/profile?2fa=enabled")
+
+    # GET — generate fresh secret + QR every time this page loads
+    secret = pyotp.random_base32()
+    session["pending_2fa_secret"] = secret
+
+    uri = pyotp.TOTP(secret).provisioning_uri(
+        name=current_user.username,
+        issuer_name="Guardian AI",
+    )
+
+    img = qrcode.make(uri)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_b64 = base64.b64encode(buf.getvalue()).decode()
+    _store_qr(current_user.id, qr_b64)  # TTL=300s in Redis
+
+    return render_template("setup_2fa.html", qr=qr_b64)
+
+
+@app.route("/disable-2fa", methods=["POST"])
+@login_required
+def disable_2fa():
+    current_user.is_2fa_enabled = False
+    current_user.otp_secret     = None
+    db.session.commit()
+    _delete_qr(current_user.id)
+    session.pop("pending_2fa_secret", None)
+
+    write_audit_log(db, AuditLog, user_id=current_user.id,
+                    action="2fa_disabled", extra_data={})
+    return redirect("/profile?2fa=disabled")
 @app.route("/logout")
 @login_required
 def logout():
