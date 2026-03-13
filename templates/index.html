@@ -2373,11 +2373,14 @@
                             style="background: {% if jsl|length>0 %}#fee2e2; color:#b91c1c{% else %}#dcfce7; color:#166534{% endif %}"
                             >{{ jsl|length }} JS Errors</span
                           >
-                          {# AFTER — safe #}
-{% set lt = p.get('load_time') %}
-<span class="issue-tag" style="background: #f1f5f9; color: #475569">
-  Load: {% if lt is not none %}{{ "%.2f"|format(lt) }}s{% else %}—{% endif %}
-</span>
+                          {# AFTER — safe #} {% set lt = p.get('load_time') %}
+                          <span
+                            class="issue-tag"
+                            style="background: #f1f5f9; color: #475569"
+                          >
+                            Load: {% if lt is not none %}{{ "%.2f"|format(lt)
+                            }}s{% else %}—{% endif %}
+                          </span>
                         </div>
 
                         {% set ui_s = p.get('ui_summary') or {} %} {% if ui_s %}
@@ -2494,7 +2497,1451 @@
                 <div class="pagination-btns" id="pgBtns"></div>
               </div>
             </div>
-            {% endif %}{# data ready #} {% endif %}{# current_run #}
+            {% endif %}{# data ready #} {% endif %}{# current_run #} {% if
+            current_run and current_run.status == 'completed' %}
+            <!-- ── QA Intelligence Panel ────────────────────────────────────────────────── -->
+            <div
+              id="qa-intelligence-panel"
+              class="qa-panel fade-in-up"
+              style="margin-top: 28px"
+            >
+              <!-- Panel Header -->
+              <div class="qa-panel-header">
+                <div class="qa-panel-title">
+                  <div class="qa-panel-icon">
+                    <i class="fa-solid fa-robot"></i>
+                  </div>
+                  <div>
+                    <h3>QA Intelligence</h3>
+                    <p>
+                      Autonomous flows, test cases &amp; bug reports generated
+                      from this scan
+                    </p>
+                  </div>
+                </div>
+                <div class="qa-header-meta" id="qa-summary-badges">
+                  <!-- populated by JS -->
+                </div>
+              </div>
+
+              <!-- Tab Navigation -->
+              <div class="qa-tabs">
+                <button
+                  class="qa-tab active"
+                  data-tab="bugs"
+                  onclick="QA.switchTab('bugs', this)"
+                >
+                  <i class="fa-solid fa-bug"></i>
+                  <span>Bug Reports</span>
+                  <span class="qa-tab-count" id="tab-count-bugs">—</span>
+                </button>
+                <button
+                  class="qa-tab"
+                  data-tab="flows"
+                  onclick="QA.switchTab('flows', this)"
+                >
+                  <i class="fa-solid fa-diagram-project"></i>
+                  <span>Flow Discovery</span>
+                  <span class="qa-tab-count" id="tab-count-flows">—</span>
+                </button>
+                <button
+                  class="qa-tab"
+                  data-tab="tests"
+                  onclick="QA.switchTab('tests', this)"
+                >
+                  <i class="fa-solid fa-vial-circle-check"></i>
+                  <span>Test Cases</span>
+                  <span class="qa-tab-count" id="tab-count-tests">—</span>
+                </button>
+                <div class="qa-tabs-spacer"></div>
+                <a
+                  class="qa-export-btn"
+                  id="qa-export-btn"
+                  href="/api/run/{{ current_run.id }}/bugs/export.csv"
+                  title="Download bug report as CSV"
+                >
+                  <i class="fa-solid fa-file-arrow-down"></i> Export CSV
+                </a>
+              </div>
+
+              <!-- ── TAB: BUG REPORTS ───────────────────────────────────────────────────── -->
+              <div class="qa-tab-content active" id="qa-pane-bugs">
+                <!-- Severity filter bar -->
+                <div class="qa-filter-bar">
+                  <span class="qa-filter-label">Filter:</span>
+                  <button
+                    class="qa-sev-btn active"
+                    data-sev="all"
+                    onclick="QA.filterBugs('all', this)"
+                  >
+                    All
+                  </button>
+                  <button
+                    class="qa-sev-btn critical"
+                    data-sev="critical"
+                    onclick="QA.filterBugs('critical', this)"
+                  >
+                    <span class="sev-dot critical"></span>Critical
+                  </button>
+                  <button
+                    class="qa-sev-btn high"
+                    data-sev="high"
+                    onclick="QA.filterBugs('high', this)"
+                  >
+                    <span class="sev-dot high"></span>High
+                  </button>
+                  <button
+                    class="qa-sev-btn medium"
+                    data-sev="medium"
+                    onclick="QA.filterBugs('medium', this)"
+                  >
+                    <span class="sev-dot medium"></span>Medium
+                  </button>
+                  <button
+                    class="qa-sev-btn low"
+                    data-sev="low"
+                    onclick="QA.filterBugs('low', this)"
+                  >
+                    <span class="sev-dot low"></span>Low
+                  </button>
+                  <!-- Severity summary chips — populated by JS -->
+                  <div class="qa-sev-summary" id="qa-sev-summary"></div>
+                </div>
+
+                <!-- Bug table -->
+                <div class="qa-table-wrap">
+                  <table class="qa-table" id="qa-bugs-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 44px">#</th>
+                        <th style="width: 90px">Severity</th>
+                        <th style="width: 110px">Type</th>
+                        <th>Title</th>
+                        <th>Page URL</th>
+                        <th style="width: 90px">Source</th>
+                        <th style="width: 40px"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="qa-bugs-tbody">
+                      <tr class="qa-skeleton-row">
+                        <td colspan="7"><div class="qa-skeleton"></div></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Bug detail drawer -->
+                <div class="qa-drawer" id="qa-bug-drawer">
+                  <div class="qa-drawer-header">
+                    <div class="qa-drawer-title" id="qa-drawer-title">
+                      Bug Detail
+                    </div>
+                    <button class="qa-drawer-close" onclick="QA.closeDrawer()">
+                      <i class="fa-solid fa-xmark"></i>
+                    </button>
+                  </div>
+                  <div class="qa-drawer-body" id="qa-drawer-body"></div>
+                </div>
+              </div>
+
+              <!-- ── TAB: FLOW DISCOVERY ────────────────────────────────────────────────── -->
+              <div class="qa-tab-content" id="qa-pane-flows">
+                <div class="qa-flows-grid" id="qa-flows-grid">
+                  <div class="qa-empty-state">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i>
+                    <p>Loading flows…</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ── TAB: TEST CASES ───────────────────────────────────────────────────── -->
+              <div class="qa-tab-content" id="qa-pane-tests">
+                <div class="qa-filter-bar">
+                  <span class="qa-filter-label">Status:</span>
+                  <button
+                    class="qa-sev-btn active"
+                    data-status="all"
+                    onclick="QA.filterTests('all', this)"
+                  >
+                    All
+                  </button>
+                  <button
+                    class="qa-sev-btn"
+                    data-status="pending"
+                    onclick="QA.filterTests('pending', this)"
+                  >
+                    Pending
+                  </button>
+                  <button
+                    class="qa-sev-btn"
+                    data-status="pass"
+                    onclick="QA.filterTests('pass', this)"
+                  >
+                    <span class="sev-dot pass"></span>Pass
+                  </button>
+                  <button
+                    class="qa-sev-btn"
+                    data-status="fail"
+                    onclick="QA.filterTests('fail', this)"
+                  >
+                    <span class="sev-dot critical"></span>Fail
+                  </button>
+                </div>
+                <div class="qa-table-wrap">
+                  <table class="qa-table" id="qa-tests-table">
+                    <thead>
+                      <tr>
+                        <th style="width: 110px">TC ID</th>
+                        <th>Scenario</th>
+                        <th style="width: 100px">Flow Type</th>
+                        <th style="width: 80px">Severity</th>
+                        <th style="width: 80px">Status</th>
+                        <th style="width: 40px"></th>
+                      </tr>
+                    </thead>
+                    <tbody id="qa-tests-tbody">
+                      <tr class="qa-skeleton-row">
+                        <td colspan="6"><div class="qa-skeleton"></div></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- TC detail drawer -->
+                <div class="qa-drawer" id="qa-tc-drawer">
+                  <div class="qa-drawer-header">
+                    <div class="qa-drawer-title" id="qa-tc-drawer-title">
+                      Test Case Detail
+                    </div>
+                    <button
+                      class="qa-drawer-close"
+                      onclick="QA.closeTcDrawer()"
+                    >
+                      <i class="fa-solid fa-xmark"></i>
+                    </button>
+                  </div>
+                  <div class="qa-drawer-body" id="qa-tc-drawer-body"></div>
+                </div>
+              </div>
+            </div>
+            {% endif %}
+
+            <!-- ══════════════════════════════════════════════════════════════════════════
+     QA PANEL STYLES — scoped under .qa-panel to avoid conflicts
+══════════════════════════════════════════════════════════════════════════ -->
+            <style>
+              /* ── Panel Shell ──────────────────────────────────────────────────────────── */
+              .qa-panel {
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-lg);
+                box-shadow: var(--shadow-md);
+                overflow: hidden;
+              }
+
+              /* ── Panel Header ────────────────────────────────────────────────────────── */
+              .qa-panel-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 20px 24px 16px;
+                border-bottom: 1px solid var(--border);
+                flex-wrap: wrap;
+                gap: 12px;
+              }
+              .qa-panel-title {
+                display: flex;
+                align-items: center;
+                gap: 14px;
+              }
+              .qa-panel-icon {
+                width: 40px;
+                height: 40px;
+                border-radius: 10px;
+                background: linear-gradient(
+                  135deg,
+                  rgba(99, 102, 241, 0.15),
+                  rgba(139, 92, 246, 0.15)
+                );
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 17px;
+                color: var(--primary);
+                flex-shrink: 0;
+              }
+              .qa-panel-title h3 {
+                font-size: 15px;
+                font-weight: 600;
+                color: var(--text-main);
+                margin-bottom: 2px;
+              }
+              .qa-panel-title p {
+                font-size: 12px;
+                color: var(--text-muted);
+              }
+              .qa-header-meta {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+              }
+              .qa-meta-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 4px 10px;
+                border-radius: 20px;
+                font-size: 11px;
+                font-weight: 600;
+                border: 1px solid transparent;
+              }
+              .qa-meta-badge.bugs-critical {
+                background: rgba(239, 68, 68, 0.1);
+                color: #dc2626;
+                border-color: rgba(239, 68, 68, 0.2);
+              }
+              .qa-meta-badge.bugs-high {
+                background: rgba(245, 158, 11, 0.1);
+                color: #d97706;
+                border-color: rgba(245, 158, 11, 0.2);
+              }
+              .qa-meta-badge.flows-badge {
+                background: rgba(99, 102, 241, 0.1);
+                color: var(--primary);
+                border-color: rgba(99, 102, 241, 0.2);
+              }
+              .qa-meta-badge.tests-badge {
+                background: rgba(16, 185, 129, 0.1);
+                color: #059669;
+                border-color: rgba(16, 185, 129, 0.2);
+              }
+
+              /* ── Tabs ────────────────────────────────────────────────────────────────── */
+              .qa-tabs {
+                display: flex;
+                align-items: center;
+                padding: 0 24px;
+                border-bottom: 1px solid var(--border);
+                background: #fafbfc;
+                gap: 2px;
+                flex-wrap: wrap;
+              }
+              .qa-tab {
+                display: flex;
+                align-items: center;
+                gap: 7px;
+                padding: 12px 16px;
+                border: none;
+                background: none;
+                font-family: var(--font-main);
+                font-size: 13px;
+                font-weight: 500;
+                color: var(--text-muted);
+                cursor: pointer;
+                border-bottom: 2px solid transparent;
+                transition:
+                  color 0.15s,
+                  border-color 0.15s;
+                white-space: nowrap;
+              }
+              .qa-tab:hover {
+                color: var(--text-main);
+              }
+              .qa-tab.active {
+                color: var(--primary);
+                border-bottom-color: var(--primary);
+              }
+              .qa-tab-count {
+                background: #f1f5f9;
+                color: var(--text-muted);
+                font-size: 10px;
+                font-weight: 700;
+                font-family: var(--font-code);
+                padding: 1px 6px;
+                border-radius: 20px;
+                min-width: 20px;
+                text-align: center;
+                transition:
+                  background 0.15s,
+                  color 0.15s;
+              }
+              .qa-tab.active .qa-tab-count {
+                background: rgba(99, 102, 241, 0.15);
+                color: var(--primary);
+              }
+              .qa-tabs-spacer {
+                flex: 1;
+              }
+              .qa-export-btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 6px 14px;
+                background: rgba(99, 102, 241, 0.07);
+                color: var(--primary);
+                border-radius: var(--radius-sm);
+                font-size: 12px;
+                font-weight: 500;
+                text-decoration: none;
+                transition: background 0.15s;
+                white-space: nowrap;
+                margin: 6px 0;
+              }
+              .qa-export-btn:hover {
+                background: var(--primary);
+                color: #fff;
+              }
+
+              /* ── Tab Content Panes ───────────────────────────────────────────────────── */
+              .qa-tab-content {
+                display: none;
+              }
+              .qa-tab-content.active {
+                display: block;
+              }
+
+              /* ── Filter Bar ──────────────────────────────────────────────────────────── */
+              .qa-filter-bar {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 12px 20px;
+                border-bottom: 1px solid var(--border);
+                flex-wrap: wrap;
+                background: #fafbfc;
+              }
+              .qa-filter-label {
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--text-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.4px;
+                margin-right: 4px;
+              }
+              .qa-sev-btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 4px 12px;
+                border: 1.5px solid var(--border);
+                background: var(--card-bg);
+                color: var(--text-muted);
+                border-radius: 20px;
+                font-size: 12px;
+                font-weight: 500;
+                cursor: pointer;
+                transition: all 0.15s;
+                font-family: var(--font-main);
+              }
+              .qa-sev-btn:hover {
+                border-color: var(--primary);
+                color: var(--primary);
+              }
+              .qa-sev-btn.active {
+                background: var(--primary);
+                color: #fff;
+                border-color: var(--primary);
+              }
+              .qa-sev-summary {
+                margin-left: auto;
+                display: flex;
+                gap: 6px;
+              }
+
+              /* ── Severity dots ───────────────────────────────────────────────────────── */
+              .sev-dot {
+                width: 7px;
+                height: 7px;
+                border-radius: 50%;
+                display: inline-block;
+                flex-shrink: 0;
+              }
+              .sev-dot.critical {
+                background: #ef4444;
+              }
+              .sev-dot.high {
+                background: #f59e0b;
+              }
+              .sev-dot.medium {
+                background: #6366f1;
+              }
+              .sev-dot.low {
+                background: #94a3b8;
+              }
+              .sev-dot.pass {
+                background: #10b981;
+              }
+
+              /* ── Table ───────────────────────────────────────────────────────────────── */
+              .qa-table-wrap {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                position: relative;
+              }
+              .qa-table {
+                width: 100%;
+                border-collapse: collapse;
+              }
+              .qa-table thead th {
+                background: #f8fafc;
+                padding: 10px 16px;
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--text-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.4px;
+                text-align: left;
+                border-bottom: 1px solid var(--border);
+                white-space: nowrap;
+              }
+              .qa-table tbody tr {
+                border-bottom: 1px solid #f1f5f9;
+                transition: background 0.1s;
+              }
+              .qa-table tbody tr:hover {
+                background: #f8fafc;
+              }
+              .qa-table tbody td {
+                padding: 11px 16px;
+                font-size: 13px;
+                color: var(--text-main);
+                vertical-align: middle;
+              }
+              .qa-table tbody td.url-cell {
+                font-family: var(--font-code);
+                font-size: 11px;
+                color: var(--text-muted);
+                max-width: 200px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+              }
+
+              /* Severity badge */
+              .sev-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 3px 9px;
+                border-radius: 20px;
+                font-size: 11px;
+                font-weight: 600;
+                white-space: nowrap;
+              }
+              .sev-badge.critical {
+                background: rgba(239, 68, 68, 0.1);
+                color: #dc2626;
+              }
+              .sev-badge.high {
+                background: rgba(245, 158, 11, 0.1);
+                color: #d97706;
+              }
+              .sev-badge.medium {
+                background: rgba(99, 102, 241, 0.1);
+                color: var(--primary);
+              }
+              .sev-badge.low {
+                background: rgba(148, 163, 184, 0.1);
+                color: #64748b;
+              }
+
+              /* Status badge */
+              .status-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 3px 9px;
+                border-radius: 20px;
+                font-size: 11px;
+                font-weight: 600;
+              }
+              .status-pill.pass {
+                background: rgba(16, 185, 129, 0.1);
+                color: #059669;
+              }
+              .status-pill.fail {
+                background: rgba(239, 68, 68, 0.1);
+                color: #dc2626;
+              }
+              .status-pill.pending {
+                background: rgba(99, 102, 241, 0.1);
+                color: var(--primary);
+              }
+              .status-pill.skip {
+                background: rgba(148, 163, 184, 0.1);
+                color: #64748b;
+              }
+              .status-pill.error {
+                background: rgba(239, 68, 68, 0.1);
+                color: #dc2626;
+              }
+              .status-pill.timeout {
+                background: rgba(245, 158, 11, 0.1);
+                color: #d97706;
+              }
+
+              /* Source badge */
+              .source-pill {
+                font-size: 10px;
+                padding: 2px 7px;
+                border-radius: 4px;
+                font-weight: 600;
+                letter-spacing: 0.3px;
+                text-transform: uppercase;
+              }
+              .source-pill.scan {
+                background: #f1f5f9;
+                color: #64748b;
+              }
+              .source-pill.test_runner {
+                background: rgba(139, 92, 246, 0.1);
+                color: #7c3aed;
+              }
+
+              /* Row expand / detail button */
+              .qa-row-btn {
+                width: 28px;
+                height: 28px;
+                border: 1.5px solid var(--border);
+                border-radius: 6px;
+                background: var(--card-bg);
+                color: var(--text-muted);
+                cursor: pointer;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 11px;
+                transition: all 0.15s;
+              }
+              .qa-row-btn:hover {
+                border-color: var(--primary);
+                color: var(--primary);
+              }
+
+              /* ── Skeleton loader ─────────────────────────────────────────────────────── */
+              .qa-skeleton {
+                height: 14px;
+                background: linear-gradient(
+                  90deg,
+                  #f1f5f9 25%,
+                  #e2e8f0 50%,
+                  #f1f5f9 75%
+                );
+                background-size: 200% 100%;
+                animation: qa-shimmer 1.4s infinite;
+                border-radius: 4px;
+              }
+              @keyframes qa-shimmer {
+                0% {
+                  background-position: 200% 0;
+                }
+                100% {
+                  background-position: -200% 0;
+                }
+              }
+
+              /* ── Empty state ─────────────────────────────────────────────────────────── */
+              .qa-empty-state {
+                padding: 48px 24px;
+                text-align: center;
+                color: var(--text-muted);
+              }
+              .qa-empty-state i {
+                font-size: 32px;
+                margin-bottom: 12px;
+                display: block;
+                opacity: 0.25;
+              }
+              .qa-empty-state p {
+                font-size: 13px;
+              }
+              .qa-empty-state h4 {
+                font-size: 14px;
+                color: var(--text-main);
+                margin-bottom: 4px;
+              }
+
+              /* ── Flows grid ──────────────────────────────────────────────────────────── */
+              .qa-flows-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                gap: 16px;
+                padding: 20px;
+              }
+              .qa-flow-card {
+                border: 1px solid var(--border);
+                border-radius: var(--radius-md);
+                padding: 16px;
+                background: var(--card-bg);
+                transition:
+                  box-shadow 0.15s,
+                  border-color 0.15s;
+                cursor: default;
+              }
+              .qa-flow-card:hover {
+                box-shadow: var(--shadow-md);
+                border-color: rgba(99, 102, 241, 0.3);
+              }
+              .qa-flow-card-header {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 10px;
+                margin-bottom: 10px;
+              }
+              .qa-flow-name {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--text-main);
+                line-height: 1.3;
+              }
+              .qa-flow-meta {
+                display: flex;
+                gap: 6px;
+                flex-wrap: wrap;
+                margin-bottom: 12px;
+              }
+              .qa-flow-tag {
+                font-size: 10px;
+                padding: 2px 7px;
+                border-radius: 4px;
+                background: #f1f5f9;
+                color: #64748b;
+                font-weight: 600;
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+              }
+              .qa-priority-dot {
+                display: inline-block;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                flex-shrink: 0;
+                margin-top: 3px;
+              }
+              .qa-priority-dot.critical {
+                background: #ef4444;
+              }
+              .qa-priority-dot.high {
+                background: #f59e0b;
+              }
+              .qa-priority-dot.medium {
+                background: #6366f1;
+              }
+              .qa-priority-dot.low {
+                background: #94a3b8;
+              }
+
+              .qa-flow-steps {
+                list-style: none;
+                padding: 0;
+                margin: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+              }
+              .qa-flow-step {
+                display: flex;
+                align-items: flex-start;
+                gap: 8px;
+                font-size: 12px;
+                color: var(--text-muted);
+              }
+              .qa-flow-step-num {
+                width: 18px;
+                height: 18px;
+                border-radius: 50%;
+                background: #f1f5f9;
+                color: #64748b;
+                font-size: 9px;
+                font-weight: 700;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+                margin-top: 1px;
+              }
+              .qa-flow-more {
+                font-size: 11px;
+                color: var(--primary);
+                margin-top: 6px;
+                cursor: pointer;
+                text-align: right;
+              }
+
+              /* ── Detail Drawer ───────────────────────────────────────────────────────── */
+              .qa-drawer {
+                display: none;
+                border-top: 1px solid var(--border);
+                background: #f8fafc;
+                animation: qa-slide-in 0.2s ease-out;
+              }
+              .qa-drawer.open {
+                display: block;
+              }
+              @keyframes qa-slide-in {
+                from {
+                  opacity: 0;
+                  transform: translateY(-6px);
+                }
+                to {
+                  opacity: 1;
+                  transform: translateY(0);
+                }
+              }
+              .qa-drawer-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 14px 20px;
+                border-bottom: 1px solid var(--border);
+                background: var(--card-bg);
+              }
+              .qa-drawer-title {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--text-main);
+              }
+              .qa-drawer-close {
+                width: 28px;
+                height: 28px;
+                border: 1.5px solid var(--border);
+                border-radius: 6px;
+                background: var(--card-bg);
+                color: var(--text-muted);
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
+                transition: all 0.15s;
+              }
+              .qa-drawer-close:hover {
+                background: #fee2e2;
+                border-color: #ef4444;
+                color: #ef4444;
+              }
+              .qa-drawer-body {
+                padding: 20px;
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+              }
+              @media (max-width: 768px) {
+                .qa-drawer-body {
+                  grid-template-columns: 1fr;
+                }
+              }
+
+              .qa-detail-section {
+                background: var(--card-bg);
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                padding: 14px;
+              }
+              .qa-detail-section h5 {
+                font-size: 11px;
+                font-weight: 700;
+                color: var(--text-muted);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 10px;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+              }
+              .qa-detail-section p,
+              .qa-detail-section li {
+                font-size: 12px;
+                color: var(--text-main);
+                line-height: 1.6;
+              }
+              .qa-detail-section ol,
+              .qa-detail-section ul {
+                padding-left: 18px;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+              }
+              .qa-detail-section.full-width {
+                grid-column: 1 / -1;
+              }
+
+              .qa-code-block {
+                background: #1e293b;
+                color: #e2e8f0;
+                font-family: var(--font-code);
+                font-size: 11px;
+                padding: 12px;
+                border-radius: 6px;
+                overflow-x: auto;
+                white-space: pre;
+                line-height: 1.6;
+                max-height: 260px;
+                overflow-y: auto;
+              }
+
+              /* Comparison row inside drawer */
+              .qa-compare-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 8px;
+              }
+              .qa-compare-box {
+                border-radius: 6px;
+                padding: 10px;
+                font-size: 12px;
+                line-height: 1.5;
+              }
+              .qa-compare-box.expected {
+                background: rgba(16, 185, 129, 0.07);
+                border: 1px solid rgba(16, 185, 129, 0.2);
+              }
+              .qa-compare-box.actual {
+                background: rgba(239, 68, 68, 0.07);
+                border: 1px solid rgba(239, 68, 68, 0.2);
+              }
+              .qa-compare-box strong {
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+                text-transform: uppercase;
+                display: block;
+                margin-bottom: 4px;
+                opacity: 0.7;
+              }
+
+              /* ── Responsive ──────────────────────────────────────────────────────────── */
+              @media (max-width: 768px) {
+                .qa-flows-grid {
+                  grid-template-columns: 1fr;
+                }
+                .qa-table-wrap {
+                  font-size: 12px;
+                }
+                .qa-panel-header {
+                  flex-direction: column;
+                  align-items: flex-start;
+                }
+              }
+            </style>
+
+            <!-- ══════════════════════════════════════════════════════════════════════════
+     QA PANEL JAVASCRIPT
+     Namespaced under window.QA to avoid conflicts with existing page scripts.
+══════════════════════════════════════════════════════════════════════════ -->
+            <script>
+              (function () {
+                "use strict";
+
+                // ── Configuration ──────────────────────────────────────────────────────────
+                const RUN_ID = (function () {
+                  const el = document.getElementById("currentRunId");
+                  return el ? parseInt(el.value, 10) : null;
+                })();
+
+                // No run ID or scan not completed — nothing to do
+                if (!RUN_ID) return;
+
+                // ── State ──────────────────────────────────────────────────────────────────
+                const state = {
+                  bugs: [], // full unfiltered list
+                  flows: [],
+                  tests: [],
+                  bugsFilter: "all",
+                  testsFilter: "all",
+                  openBugId: null,
+                  openTcId: null,
+                };
+
+                // ── API Layer ──────────────────────────────────────────────────────────────
+
+                async function fetchJSON(url) {
+                  const res = await fetch(url, { credentials: "same-origin" });
+                  if (!res.ok) throw new Error(`${url} → HTTP ${res.status}`);
+                  return res.json();
+                }
+
+                async function loadBugs() {
+                  const data = await fetchJSON(`/api/run/${RUN_ID}/bugs`);
+                  return data.bugs || [];
+                }
+
+                async function loadFlows() {
+                  const data = await fetchJSON(`/api/run/${RUN_ID}/flows`);
+                  return data.flows || [];
+                }
+
+                async function loadTestCases() {
+                  const data = await fetchJSON(`/api/run/${RUN_ID}/test-cases`);
+                  return data.test_cases || [];
+                }
+
+                // ── Helpers ────────────────────────────────────────────────────────────────
+
+                function esc(str) {
+                  if (!str) return "";
+                  return String(str)
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;");
+                }
+
+                function sevBadge(sev) {
+                  const s = (sev || "low").toLowerCase();
+                  const icons = {
+                    critical: "fa-circle-exclamation",
+                    high: "fa-triangle-exclamation",
+                    medium: "fa-circle-dot",
+                    low: "fa-circle-minus",
+                  };
+                  return `<span class="sev-badge ${s}"><i class="fa-solid ${icons[s] || "fa-circle"}"></i>${esc(s)}</span>`;
+                }
+
+                function statusPill(status) {
+                  const s = (status || "pending").toLowerCase();
+                  const icons = {
+                    pass: "fa-check",
+                    fail: "fa-xmark",
+                    pending: "fa-clock",
+                    skip: "fa-forward",
+                    error: "fa-bolt",
+                    timeout: "fa-hourglass-end",
+                  };
+                  return `<span class="status-pill ${s}"><i class="fa-solid ${icons[s] || "fa-circle"}"></i>${esc(s)}</span>`;
+                }
+
+                function sourcePill(source) {
+                  const s = (source || "scan").toLowerCase();
+                  const label = s === "test_runner" ? "Test" : "Scan";
+                  return `<span class="source-pill ${s}">${label}</span>`;
+                }
+
+                function truncate(str, len) {
+                  if (!str) return "—";
+                  return str.length > len ? str.substring(0, len) + "…" : str;
+                }
+
+                function formatUrl(url) {
+                  if (!url) return "—";
+                  try {
+                    const u = new URL(url);
+                    return u.pathname + (u.search || "");
+                  } catch {
+                    return url;
+                  }
+                }
+
+                // ── Tab Switching ──────────────────────────────────────────────────────────
+
+                function switchTab(tab, btn) {
+                  document
+                    .querySelectorAll(".qa-tab")
+                    .forEach((b) => b.classList.remove("active"));
+                  document
+                    .querySelectorAll(".qa-tab-content")
+                    .forEach((p) => p.classList.remove("active"));
+                  if (btn) btn.classList.add("active");
+                  const pane = document.getElementById(`qa-pane-${tab}`);
+                  if (pane) pane.classList.add("active");
+                  // Close any open drawers
+                  closeDrawer();
+                  closeTcDrawer();
+                }
+
+                // ── Bug Tab ────────────────────────────────────────────────────────────────
+
+                function renderBugs(bugs) {
+                  const tbody = document.getElementById("qa-bugs-tbody");
+                  if (!tbody) return;
+
+                  if (!bugs.length) {
+                    tbody.innerHTML = `<tr><td colspan="7">
+        <div class="qa-empty-state">
+          <i class="fa-solid fa-check-circle"></i>
+          <h4>No bugs found</h4>
+          <p>No issues were detected for this severity filter.</p>
+        </div></td></tr>`;
+                    return;
+                  }
+
+                  tbody.innerHTML = bugs
+                    .map(
+                      (b, i) => `
+      <tr data-bug-idx="${i}">
+        <td style="font-family:var(--font-code);font-size:11px;color:var(--text-muted)">${esc(String(b.id || i + 1))}</td>
+        <td>${sevBadge(b.severity)}</td>
+        <td><span style="font-size:11px;color:var(--text-muted);text-transform:capitalize">${esc(b.bug_type || "—")}</span></td>
+        <td><span title="${esc(b.bug_title)}">${esc(truncate(b.bug_title, 72))}</span></td>
+        <td class="url-cell" title="${esc(b.page_url)}">${esc(formatUrl(b.page_url))}</td>
+        <td>${sourcePill(b.source)}</td>
+        <td><button class="qa-row-btn" title="View detail" onclick="QA.openBugDetail(${i})">
+          <i class="fa-solid fa-chevron-down"></i></button></td>
+      </tr>
+    `,
+                    )
+                    .join("");
+                }
+
+                function filterBugs(sev, btn) {
+                  state.bugsFilter = sev;
+                  document
+                    .querySelectorAll("#qa-pane-bugs .qa-sev-btn")
+                    .forEach((b) => b.classList.remove("active"));
+                  if (btn) btn.classList.add("active");
+                  const filtered =
+                    sev === "all"
+                      ? state.bugs
+                      : state.bugs.filter((b) => b.severity === sev);
+                  renderBugs(filtered);
+                  closeDrawer();
+                }
+
+                function openBugDetail(idx) {
+                  const filtered =
+                    state.bugsFilter === "all"
+                      ? state.bugs
+                      : state.bugs.filter(
+                          (b) => b.severity === state.bugsFilter,
+                        );
+                  const bug = filtered[idx];
+                  if (!bug) return;
+
+                  const drawer = document.getElementById("qa-bug-drawer");
+                  const title = document.getElementById("qa-drawer-title");
+                  const body = document.getElementById("qa-drawer-body");
+                  if (!drawer || !body) return;
+
+                  title.innerHTML = `${sevBadge(bug.severity)} &nbsp;${esc(truncate(bug.bug_title, 80))}`;
+
+                  const stepsHtml = (bug.steps_to_reproduce || []).length
+                    ? `<ol>${bug.steps_to_reproduce.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>`
+                    : '<p style="color:var(--text-muted)">No steps recorded.</p>';
+
+                  const snippetHtml = bug.playwright_snippet
+                    ? `<div class="qa-detail-section full-width">
+           <h5><i class="fa-solid fa-code"></i> Playwright Snippet</h5>
+           <div class="qa-code-block">${esc(bug.playwright_snippet)}</div>
+         </div>`
+                    : "";
+
+                  body.innerHTML = `
+      <div class="qa-detail-section">
+        <h5><i class="fa-solid fa-circle-info"></i> Description</h5>
+        <p>${esc(bug.description || "—")}</p>
+      </div>
+      <div class="qa-detail-section">
+        <h5><i class="fa-solid fa-bolt"></i> Impact</h5>
+        <p>${esc(bug.impact || "—")}</p>
+      </div>
+      <div class="qa-detail-section">
+        <h5><i class="fa-solid fa-list-ol"></i> Steps to Reproduce</h5>
+        ${stepsHtml}
+      </div>
+      <div class="qa-detail-section">
+        <h5><i class="fa-solid fa-screwdriver-wrench"></i> Suggested Fix</h5>
+        <p>${esc(bug.suggested_fix || "—")}</p>
+      </div>
+      <div class="qa-detail-section full-width">
+        <h5><i class="fa-solid fa-arrows-left-right"></i> Expected vs Actual</h5>
+        <div class="qa-compare-row">
+          <div class="qa-compare-box expected">
+            <strong>✓ Expected</strong>${esc(bug.expected_result || "—")}
+          </div>
+          <div class="qa-compare-box actual">
+            <strong>✗ Actual</strong>${esc(bug.actual_result || "—")}
+          </div>
+        </div>
+      </div>
+      ${snippetHtml}
+    `;
+
+                  drawer.classList.add("open");
+                  drawer.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest",
+                  });
+                }
+
+                function closeDrawer() {
+                  const drawer = document.getElementById("qa-bug-drawer");
+                  if (drawer) drawer.classList.remove("open");
+                }
+
+                // ── Flow Tab ───────────────────────────────────────────────────────────────
+
+                function renderFlows(flows) {
+                  const grid = document.getElementById("qa-flows-grid");
+                  if (!grid) return;
+
+                  if (!flows.length) {
+                    grid.innerHTML = `<div class="qa-empty-state" style="grid-column:1/-1">
+        <i class="fa-solid fa-diagram-project"></i>
+        <h4>No flows discovered</h4>
+        <p>The crawler did not find enough page structure to generate user flows.</p>
+      </div>`;
+                    return;
+                  }
+
+                  grid.innerHTML = flows
+                    .map((f) => {
+                      const steps = (f.steps || []).slice(0, 4);
+                      const extra = (f.steps || []).length - 4;
+                      const stepsHtml = steps
+                        .map(
+                          (s) => `
+        <li class="qa-flow-step">
+          <div class="qa-flow-step-num">${s.step_number || "?"}</div>
+          <span>${esc(truncate(s.action_detail || s.action, 55))}</span>
+        </li>`,
+                        )
+                        .join("");
+                      const extraHtml =
+                        extra > 0
+                          ? `<div class="qa-flow-more">+${extra} more steps</div>`
+                          : "";
+
+                      const tags = (f.tags || [])
+                        .map(
+                          (t) => `<span class="qa-flow-tag">${esc(t)}</span>`,
+                        )
+                        .join("");
+                      const priorityColor = f.priority || "medium";
+
+                      return `
+        <div class="qa-flow-card">
+          <div class="qa-flow-card-header">
+            <div class="qa-flow-name">${esc(f.flow_name)}</div>
+            <div class="qa-priority-dot ${priorityColor}" title="Priority: ${esc(f.priority)}"></div>
+          </div>
+          <div class="qa-flow-meta">${tags}</div>
+          ${f.description ? `<p style="font-size:11px;color:var(--text-muted);margin-bottom:10px;line-height:1.5">${esc(f.description)}</p>` : ""}
+          <ul class="qa-flow-steps">${stepsHtml}</ul>
+          ${extraHtml}
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)">
+            <span style="font-size:11px;color:var(--text-muted)">${(f.steps || []).length} step${(f.steps || []).length !== 1 ? "s" : ""}</span>
+            <span class="qa-flow-tag" style="background:rgba(99,102,241,.1);color:var(--primary)">${esc(f.flow_type || "navigation")}</span>
+          </div>
+        </div>`;
+                    })
+                    .join("");
+                }
+
+                // ── Test Cases Tab ─────────────────────────────────────────────────────────
+
+                function renderTests(tests) {
+                  const tbody = document.getElementById("qa-tests-tbody");
+                  if (!tbody) return;
+
+                  if (!tests.length) {
+                    tbody.innerHTML = `<tr><td colspan="6">
+        <div class="qa-empty-state">
+          <i class="fa-solid fa-vial"></i>
+          <h4>No test cases</h4>
+          <p>Test cases are generated from discovered flows. Run a scan with form pages to generate them.</p>
+        </div></td></tr>`;
+                    return;
+                  }
+
+                  tbody.innerHTML = tests
+                    .map(
+                      (tc, i) => `
+      <tr data-tc-idx="${i}">
+        <td style="font-family:var(--font-code);font-size:11px;color:var(--primary)">${esc(tc.tc_id)}</td>
+        <td><span title="${esc(tc.scenario)}">${esc(truncate(tc.scenario, 65))}</span></td>
+        <td><span class="qa-flow-tag">${esc(tc.flow_id ? tc.flow_id.replace(/flow_|_\d+/g, "") : "—")}</span></td>
+        <td>${sevBadge(tc.severity)}</td>
+        <td>${statusPill(tc.status)}</td>
+        <td><button class="qa-row-btn" title="View detail" onclick="QA.openTcDetail(${i})">
+          <i class="fa-solid fa-chevron-down"></i></button></td>
+      </tr>
+    `,
+                    )
+                    .join("");
+                }
+
+                function filterTests(status, btn) {
+                  state.testsFilter = status;
+                  document
+                    .querySelectorAll("#qa-pane-tests .qa-sev-btn")
+                    .forEach((b) => b.classList.remove("active"));
+                  if (btn) btn.classList.add("active");
+                  const filtered =
+                    status === "all"
+                      ? state.tests
+                      : state.tests.filter((t) => t.status === status);
+                  renderTests(filtered);
+                  closeTcDrawer();
+                }
+
+                function openTcDetail(idx) {
+                  const filtered =
+                    state.testsFilter === "all"
+                      ? state.tests
+                      : state.tests.filter(
+                          (t) => t.status === state.testsFilter,
+                        );
+                  const tc = filtered[idx];
+                  if (!tc) return;
+
+                  const drawer = document.getElementById("qa-tc-drawer");
+                  const title = document.getElementById("qa-tc-drawer-title");
+                  const body = document.getElementById("qa-tc-drawer-body");
+                  if (!drawer || !body) return;
+
+                  title.innerHTML = `${statusPill(tc.status)} &nbsp;<span style="font-family:var(--font-code);color:var(--primary)">${esc(tc.tc_id)}</span> — ${esc(truncate(tc.scenario, 60))}`;
+
+                  const preCondHtml = (tc.preconditions || []).length
+                    ? `<ul>${tc.preconditions.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
+                    : '<p style="color:var(--text-muted)">None recorded.</p>';
+
+                  const stepsHtml = (tc.steps || []).length
+                    ? `<ol>${tc.steps.map((s) => `<li><strong>${esc(s.action || "")}:</strong> ${esc(s.description || s.action_detail || "")}</li>`).join("")}</ol>`
+                    : '<p style="color:var(--text-muted)">No steps.</p>';
+
+                  const snippetHtml = tc.playwright_snippet
+                    ? `<div class="qa-detail-section full-width">
+           <h5><i class="fa-solid fa-code"></i> Playwright Snippet</h5>
+           <div class="qa-code-block">${esc(tc.playwright_snippet)}</div>
+         </div>`
+                    : "";
+
+                  body.innerHTML = `
+      <div class="qa-detail-section">
+        <h5><i class="fa-solid fa-shield-check"></i> Preconditions</h5>
+        ${preCondHtml}
+      </div>
+      <div class="qa-detail-section">
+        <h5><i class="fa-solid fa-list-ol"></i> Test Steps</h5>
+        ${stepsHtml}
+      </div>
+      <div class="qa-detail-section full-width">
+        <h5><i class="fa-solid fa-arrows-left-right"></i> Expected vs Actual</h5>
+        <div class="qa-compare-row">
+          <div class="qa-compare-box expected">
+            <strong>✓ Expected</strong>${esc(tc.expected_result || "—")}
+          </div>
+          <div class="qa-compare-box actual">
+            <strong>→ Actual</strong>${esc(tc.actual_result || "Not yet executed")}
+          </div>
+        </div>
+      </div>
+      ${snippetHtml}
+    `;
+
+                  drawer.classList.add("open");
+                  drawer.scrollIntoView({
+                    behavior: "smooth",
+                    block: "nearest",
+                  });
+                }
+
+                function closeTcDrawer() {
+                  const drawer = document.getElementById("qa-tc-drawer");
+                  if (drawer) drawer.classList.remove("open");
+                }
+
+                // ── Summary Badges ─────────────────────────────────────────────────────────
+
+                function renderSummaryBadges() {
+                  const el = document.getElementById("qa-summary-badges");
+                  if (!el) return;
+
+                  const critBugs = state.bugs.filter(
+                    (b) => b.severity === "critical",
+                  ).length;
+                  const highBugs = state.bugs.filter(
+                    (b) => b.severity === "high",
+                  ).length;
+
+                  let html = "";
+                  if (critBugs)
+                    html += `<span class="qa-meta-badge bugs-critical"><i class="fa-solid fa-circle-exclamation"></i>${critBugs} Critical</span>`;
+                  if (highBugs)
+                    html += `<span class="qa-meta-badge bugs-high"><i class="fa-solid fa-triangle-exclamation"></i>${highBugs} High</span>`;
+                  if (state.flows.length)
+                    html += `<span class="qa-meta-badge flows-badge"><i class="fa-solid fa-diagram-project"></i>${state.flows.length} Flows</span>`;
+                  if (state.tests.length)
+                    html += `<span class="qa-meta-badge tests-badge"><i class="fa-solid fa-vial"></i>${state.tests.length} Tests</span>`;
+                  el.innerHTML = html;
+                }
+
+                function updateTabCounts() {
+                  const bugCount = document.getElementById("tab-count-bugs");
+                  const flowCount = document.getElementById("tab-count-flows");
+                  const testCount = document.getElementById("tab-count-tests");
+                  if (bugCount) bugCount.textContent = state.bugs.length;
+                  if (flowCount) flowCount.textContent = state.flows.length;
+                  if (testCount) testCount.textContent = state.tests.length;
+                }
+
+                function renderSevSummary() {
+                  const el = document.getElementById("qa-sev-summary");
+                  if (!el || !state.bugs.length) return;
+                  const counts = {};
+                  state.bugs.forEach((b) => {
+                    counts[b.severity] = (counts[b.severity] || 0) + 1;
+                  });
+                  el.innerHTML = ["critical", "high", "medium", "low"]
+                    .filter((s) => counts[s])
+                    .map(
+                      (
+                        s,
+                      ) => `<span style="font-size:11px;color:var(--text-muted);display:inline-flex;align-items:center;gap:3px">
+        <span class="sev-dot ${s}"></span>${counts[s]}</span>`,
+                    )
+                    .join("");
+                }
+
+                // ── Bootstrap ──────────────────────────────────────────────────────────────
+
+                async function init() {
+                  try {
+                    // Fire all 3 requests in parallel
+                    const [bugs, flows, tests] = await Promise.allSettled([
+                      loadBugs(),
+                      loadFlows(),
+                      loadTestCases(),
+                    ]);
+
+                    state.bugs = bugs.status === "fulfilled" ? bugs.value : [];
+                    state.flows =
+                      flows.status === "fulfilled" ? flows.value : [];
+                    state.tests =
+                      tests.status === "fulfilled" ? tests.value : [];
+
+                    renderBugs(state.bugs);
+                    renderFlows(state.flows);
+                    renderTests(state.tests);
+                    updateTabCounts();
+                    renderSummaryBadges();
+                    renderSevSummary();
+                  } catch (err) {
+                    console.error("[GuardianQA] init failed:", err);
+                  }
+                }
+
+                // ── Public API ─────────────────────────────────────────────────────────────
+                window.QA = {
+                  switchTab,
+                  filterBugs,
+                  openBugDetail,
+                  closeDrawer,
+                  filterTests,
+                  openTcDetail,
+                  closeTcDrawer,
+                };
+
+                // Auto-run on DOM ready
+                if (document.readyState === "loading") {
+                  document.addEventListener("DOMContentLoaded", init);
+                } else {
+                  init();
+                }
+              })();
+            </script>
           </div>
         </div>
       </div>

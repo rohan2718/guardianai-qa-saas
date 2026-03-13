@@ -231,3 +231,5 @@ class PasswordResetToken(db.Model):
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(UTC))
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False)
     used       = db.Column(db.Boolean, default=False, nullable=False)
+
+from models_qa import QAFlow, QATestCase, QATestResult, BugReport, RegressionReport

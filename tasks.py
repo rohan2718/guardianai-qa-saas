@@ -14,12 +14,112 @@ from datetime import datetime, UTC
 
 from app import db, app
 from models import TestRun, PageResult
+import asyncio
+import json
+import logging
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
+from datetime import datetime, UTC
 
+from app import db, app
+from models import TestRun, PageResult
+from models_qa import QAFlow, QATestCase, QATestResult, BugReport
+from engines.flow_discovery import discover_flows_as_dicts
+from engines.test_case_generator import generate_test_cases_as_dicts
+from engines.bug_reporter import generate_bugs_from_scan
 logger = logging.getLogger(__name__)
 
 # Seconds to allow Cohere to respond before giving up and using basic summary
 AI_SUMMARY_TIMEOUT = int(__import__("os").environ.get("AI_SUMMARY_TIMEOUT", 30))
 
+def run_qa_pipeline(run_id: int, page_data: list) -> dict:
+    """
+    Runs after crawl completes: discovers flows, generates test cases,
+    generates bug reports from scan findings. Persists all to DB.
+    Returns summary dict for updating TestRun QA columns.
+    """
+    summary = {
+        "total_flows": 0, "total_test_cases": 0,
+        "total_bugs": 0, "critical_bugs": 0,
+        "high_bugs": 0, "medium_bugs": 0, "low_bugs": 0,
+    }
+
+    try:
+        # Step 1: Discover Flows
+        flows = discover_flows_as_dicts(page_data)
+        summary["total_flows"] = len(flows)
+
+        flow_db_map = {}
+        for flow in flows:
+            db_flow = QAFlow(
+                run_id=run_id,
+                flow_id=flow["flow_id"],
+                flow_name=flow["flow_name"],
+                flow_type=flow.get("flow_type"),
+                priority=flow.get("priority"),
+                entry_url=flow.get("entry_url"),
+                exit_url=flow.get("exit_url"),
+                description=flow.get("description"),
+                tags=flow.get("tags", []),
+                steps=flow.get("steps", []),
+            )
+            db.session.add(db_flow)
+        db.session.flush()
+
+        for db_flow in QAFlow.query.filter_by(run_id=run_id).all():
+            flow_db_map[db_flow.flow_id] = db_flow.id
+
+        # Step 2: Generate Test Cases
+        test_cases = generate_test_cases_as_dicts(flows, run_id)
+        summary["total_test_cases"] = len(test_cases)
+
+        for tc in test_cases:
+            db.session.add(QATestCase(
+                run_id=run_id,
+                flow_id=tc.get("flow_id"),
+                qa_flow_db_id=flow_db_map.get(tc.get("flow_id") or ""),
+                tc_id=tc["tc_id"],
+                scenario=tc["scenario"],
+                description=tc.get("description"),
+                preconditions=tc.get("preconditions", []),
+                steps=tc.get("steps", []),
+                expected_result=tc.get("expected_result"),
+                status="pending",
+                severity=tc.get("severity", "medium"),
+                tags=tc.get("tags", []),
+                playwright_snippet=tc.get("playwright_snippet"),
+            ))
+
+        # Step 3: Generate Bug Reports from scan findings
+        scan_bugs = generate_bugs_from_scan(page_data, run_id)
+        for bug in scan_bugs:
+            summary["total_bugs"] += 1
+            sev_key = f"{bug.severity}_bugs"
+            summary[sev_key] = summary.get(sev_key, 0) + 1
+            db.session.add(BugReport(
+                run_id=run_id,
+                bug_title=bug.bug_title,
+                page_url=bug.page_url,
+                bug_type=bug.bug_type,
+                severity=bug.severity,
+                component=bug.component,
+                description=bug.description,
+                impact=bug.impact,
+                steps_to_reproduce=bug.steps_to_reproduce,
+                expected_result=bug.expected_result,
+                actual_result=bug.actual_result,
+                suggested_fix=bug.suggested_fix,
+                screenshot_path=bug.screenshot_path,
+                source="scan",
+            ))
+
+        db.session.commit()
+        logger.info(f"[qa_pipeline] run {run_id}: {summary}")
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"[qa_pipeline] failed for run {run_id}: {e}", exc_info=True)
+
+    return summary
 
 def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: list = None):
     """
@@ -237,7 +337,18 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             # Add all page records to session (no intermediate commit)
             if page_records:
                 db.session.bulk_save_objects(page_records)
-
+            try:
+                qa_summary = run_qa_pipeline(run_id, pages)
+                run.total_bugs       = qa_summary.get("total_bugs", 0)
+                run.critical_bugs    = qa_summary.get("critical_bugs", 0)
+                run.high_bugs        = qa_summary.get("high_bugs", 0)
+                run.medium_bugs      = qa_summary.get("medium_bugs", 0)
+                run.low_bugs         = qa_summary.get("low_bugs", 0)
+                run.total_flows      = qa_summary.get("total_flows", 0)
+                run.total_test_cases = qa_summary.get("total_test_cases", 0)
+                run.qa_enabled       = True
+            except Exception as qa_err:
+                logger.error(f"QA pipeline error (non-fatal): {qa_err}", exc_info=True)
             # ── SINGLE ATOMIC COMMIT — TestRun + all PageResults ──────────────
             try:
                 run.status      = "completed"

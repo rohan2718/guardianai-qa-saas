@@ -1038,7 +1038,44 @@ def run_pages_paginated(run_id):
         "total_pages": total_pages,
     })
 
+@app.route("/api/run/<int:run_id>/bugs")
+@login_required
+@csrf.exempt
+def api_run_bugs(run_id):
+    from models_qa import BugReport
+    run = db.session.get(TestRun, run_id)
+    if not run or run.user_id != current_user.id:
+        abort(403)
+    severity = request.args.get("severity")
+    q = BugReport.query.filter_by(run_id=run_id)
+    if severity:
+        q = q.filter_by(severity=severity)
+    bugs = [b.to_dict() for b in q.order_by(BugReport.id.asc()).all()]
+    return jsonify({"bugs": bugs, "total": len(bugs)})
 
+
+@app.route("/api/run/<int:run_id>/flows")
+@login_required
+@csrf.exempt
+def api_run_flows(run_id):
+    from models_qa import QAFlow
+    run = db.session.get(TestRun, run_id)
+    if not run or run.user_id != current_user.id:
+        abort(403)
+    flows = [f.to_dict() for f in QAFlow.query.filter_by(run_id=run_id).all()]
+    return jsonify({"flows": flows, "total": len(flows)})
+
+
+@app.route("/api/run/<int:run_id>/test-cases")
+@login_required
+@csrf.exempt
+def api_run_test_cases(run_id):
+    from models_qa import QATestCase
+    run = db.session.get(TestRun, run_id)
+    if not run or run.user_id != current_user.id:
+        abort(403)
+    cases = [tc.to_dict() for tc in QATestCase.query.filter_by(run_id=run_id).all()]
+    return jsonify({"test_cases": cases, "total": len(cases)})
 # ════════════════════════════════════════════════════════════════════════════════
 # SCAN HISTORY API  (JSON — CSRF exempt)
 # ════════════════════════════════════════════════════════════════════════════════

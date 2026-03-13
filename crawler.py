@@ -517,6 +517,93 @@ class CrawlAnomalyDetector:
         return self.consecutive_err >= self.threshold * 2  # abort at 2x threshold
 
 
+
+
+import os
+ 
+def _read_auth_config() -> dict | None:
+    """
+    Reads login config from environment variables.
+    Returns None if CRAWLER_USERNAME is not set (no auth needed).
+ 
+    Add to .env:
+        CRAWLER_LOGIN_URL=http://103.108.207.222:5555
+        CRAWLER_USERNAME_FIELD=#txtUserName
+        CRAWLER_PASSWORD_FIELD=#txtPwd
+        CRAWLER_SUBMIT=button:has-text('Sign In')
+        CRAWLER_USERNAME=EMP002
+        CRAWLER_PASSWORD=EMP002
+        CRAWLER_SUCCESS_URL=/Account/Home
+        CRAWLER_SKIP_URLS=/Account/Logout,/Account/SignOut   # optional, comma-separated paths
+    """
+    username = os.environ.get("CRAWLER_USERNAME", "").strip()
+    if not username:
+        return None  # no auth configured — skip
+ 
+    return {
+        "login_url":       os.environ.get("CRAWLER_LOGIN_URL", "").strip(),
+        "username_field":  os.environ.get("CRAWLER_USERNAME_FIELD", "#txtUserName").strip(),
+        "password_field":  os.environ.get("CRAWLER_PASSWORD_FIELD", "#txtPwd").strip(),
+        "submit_selector": os.environ.get("CRAWLER_SUBMIT", "button:has-text('Sign In')").strip(),
+        "username":        username,
+        "password":        os.environ.get("CRAWLER_PASSWORD", "").strip(),
+        "success_url":     os.environ.get("CRAWLER_SUCCESS_URL", "").strip(),
+        "skip_urls":       [p.strip() for p in os.environ.get("CRAWLER_SKIP_URLS", "").split(",") if p.strip()],
+    }
+
+
+def _is_skip_url(url: str, auth_cfg: dict | None) -> bool:
+    """
+    Returns True if the URL should never be crawled because it would destroy
+    the session (e.g. /Account/Logout) or is explicitly blocklisted.
+
+    Always skips paths containing 'logout' or 'signout' (case-insensitive)
+    plus any paths listed in CRAWLER_SKIP_URLS.
+    """
+    path = urlparse(url).path.lower()
+    # Hard-coded destructive path guard
+    if "logout" in path or "signout" in path:
+        return True
+    # User-configured skip list
+    if auth_cfg:
+        for skip_path in auth_cfg.get("skip_urls", []):
+            if skip_path.lower() in path:
+                return True
+    return False
+ 
+ 
+async def _do_login(context, auth: dict) -> bool:
+    page = await context.new_page()
+    try:
+        await page.goto(auth["login_url"], wait_until="domcontentloaded", timeout=20000)
+        await page.wait_for_timeout(1000)
+        await page.fill(auth["username_field"], auth["username"])
+        await page.fill(auth["password_field"], auth["password"])
+        await page.click(auth["submit_selector"])
+        await page.wait_for_load_state("networkidle", timeout=20000)
+        await page.wait_for_timeout(2000)  # ← increase from 1500 to 2000
+
+        current_url = page.url
+        success_url = auth.get("success_url", "")
+
+        if success_url and success_url in current_url:
+            # ── Save cookies back to context so all future pages use them ──
+            cookies = await context.cookies()
+            logger.info(f"[auth] ✓ Login succeeded — {len(cookies)} cookies captured")
+            return True
+        elif auth["login_url"].rstrip("/") == current_url.rstrip("/"):
+            logger.warning(f"[auth] ✗ Login failed — still on login page")
+            return False
+        else:
+            cookies = await context.cookies()
+            logger.info(f"[auth] ✓ Redirected to {current_url} — {len(cookies)} cookies captured")
+            return True
+
+    except Exception as e:
+        logger.error(f"[auth] Login error: {e}", exc_info=True)
+        return False
+    finally:
+        await page.close()  # close page but NOT context — cookies stay alive
 # ── Main Crawl Loop ────────────────────────────────────────────────────────────
 
 async def crawl_site(
@@ -545,6 +632,12 @@ async def crawl_site(
         if current_url in visited:
             continue
         if not same_domain(base_url, current_url):
+            continue
+        # Skip URLs that would destroy the session (logout, signout, etc.)
+        _auth_skip_cfg = _read_auth_config()
+        if _is_skip_url(current_url, _auth_skip_cfg):
+            logger.info(f"[auth] Skipping session-destructive URL: {current_url}")
+            visited.add(current_url)  # mark visited so it's never re-queued
             continue
 
         visited.add(current_url)
@@ -600,6 +693,31 @@ async def crawl_site(
                 continue
 
             await page.wait_for_timeout(1500)  # reduced from 2000ms
+
+            # ── SESSION GUARD: detect if ERP redirected us to login page ──────
+            _auth_cfg = _read_auth_config()
+            if _auth_cfg:
+                _final_url   = page.url
+                _login_url   = _auth_cfg.get("login_url", "").rstrip("/")
+                _success_url = _auth_cfg.get("success_url", "")
+                _redirected_to_login = (
+                    _final_url.rstrip("/") == _login_url or
+                    (_success_url and _success_url not in _final_url and
+                     _login_url and urlparse(_final_url).netloc == urlparse(_login_url).netloc and
+                     "login" in _final_url.lower())
+                )
+                if _redirected_to_login and _final_url.rstrip("/") != current_url.rstrip("/"):
+                    logger.warning(f"[auth] Session expired on {current_url} — re-authenticating...")
+                    await page.close()
+                    _relogin_ok = await _do_login(context, _auth_cfg)
+                    if _relogin_ok:
+                        logger.info(f"[auth] Re-authenticated — re-queuing {current_url}")
+                        visited.discard(current_url)
+                        queue.insert(0, current_url)
+                    else:
+                        logger.error(f"[auth] Re-auth failed — skipping {current_url}")
+                    continue
+            # ── END SESSION GUARD ─────────────────────────────────────────────
 
             status = response.status if response else 0
             title  = ""
@@ -669,8 +787,9 @@ async def crawl_site(
             internal_links = link_data["internal_links"]
 
             # Enqueue unvisited internal links
+            _auth_enqueue_cfg = _read_auth_config()
             for link in internal_links:
-                if link not in visited and link not in queue:
+                if link not in visited and link not in queue and not _is_skip_url(link, _auth_enqueue_cfg):
                     queue.append(link)
 
             # ── Compute scores ──
@@ -913,13 +1032,13 @@ async def main(
 ):
     visited   = set()
     page_data = []
-
+ 
     # Always resolve to int or None — never pass a raw string into crawl_site
     try:
         max_pages = int(page_limit) if page_limit not in (None, "", "None", "null") else None
     except (TypeError, ValueError):
         max_pages = None
-
+ 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -927,6 +1046,24 @@ async def main(
             ignore_https_errors=True,
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
+ 
+        # ── AUTH PATCH START ──────────────────────────────────────────────────
+        # ── AUTH PATCH START ──────────────────────────────────────────────────
+        auth = _read_auth_config()
+        if auth:
+            login_ok = await _do_login(context, auth)
+            if login_ok:
+                logger.info("[auth] Session established — crawling as authenticated user")
+                # Override start URL to post-login page so crawler skips login page
+                success_url = auth.get("success_url", "").strip()
+                if success_url:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(start_url)
+                    start_url = f"{parsed.scheme}://{parsed.netloc}{success_url}"
+                    logger.info(f"[auth] Crawl start redirected to: {start_url}")
+            else:
+                logger.warning("[auth] Login failed — crawling as unauthenticated user")
+        # ── AUTH PATCH END ────────────────────────────────────────────────────
         try:
             await crawl_site(
                 context=context,
@@ -941,7 +1078,7 @@ async def main(
         finally:
             await context.close()
             await browser.close()
-
+ 
     return await build_reports(run_id, page_data, active_filters)
 
 
