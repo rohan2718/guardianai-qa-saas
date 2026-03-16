@@ -141,6 +141,32 @@ class TestRun(db.Model):
     ai_summary      = db.Column(db.Text, nullable=True)
     ai_summary_html = db.Column(db.Text, nullable=True)
 
+    # Failure diagnostics
+    error_detail = db.Column(db.Text, nullable=True)
+
+    # QA pipeline aggregate columns
+    # Migration SQL for existing databases:
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS total_bugs INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS critical_bugs INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS high_bugs INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS medium_bugs INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS low_bugs INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS total_flows INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS total_test_cases INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS tests_passed INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS tests_failed INTEGER DEFAULT 0;
+    #   ALTER TABLE test_runs ADD COLUMN IF NOT EXISTS qa_enabled BOOLEAN DEFAULT FALSE;
+    total_bugs       = db.Column(db.Integer, default=0, nullable=True)
+    critical_bugs    = db.Column(db.Integer, default=0, nullable=True)
+    high_bugs        = db.Column(db.Integer, default=0, nullable=True)
+    medium_bugs      = db.Column(db.Integer, default=0, nullable=True)
+    low_bugs         = db.Column(db.Integer, default=0, nullable=True)
+    total_flows      = db.Column(db.Integer, default=0, nullable=True)
+    total_test_cases = db.Column(db.Integer, default=0, nullable=True)
+    tests_passed     = db.Column(db.Integer, default=0, nullable=True)
+    tests_failed     = db.Column(db.Integer, default=0, nullable=True)
+    qa_enabled       = db.Column(db.Boolean, default=False, nullable=True)
+
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
 
 

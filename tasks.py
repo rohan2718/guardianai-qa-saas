@@ -14,43 +14,46 @@ from datetime import datetime, UTC
 
 from app import db, app
 from models import TestRun, PageResult
-import asyncio
-import json
-import logging
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from datetime import datetime, UTC
-
-from app import db, app
-from models import TestRun, PageResult
 from models_qa import QAFlow, QATestCase, QATestResult, BugReport
 from engines.flow_discovery import discover_flows_as_dicts
 from engines.test_case_generator import generate_test_cases_as_dicts
-from engines.bug_reporter import generate_bugs_from_scan
+from engines.bug_reporter import generate_bugs_from_scan, generate_bugs_from_test_run
 logger = logging.getLogger(__name__)
 
 # Seconds to allow Cohere to respond before giving up and using basic summary
 AI_SUMMARY_TIMEOUT = int(__import__("os").environ.get("AI_SUMMARY_TIMEOUT", 30))
 
-def run_qa_pipeline(run_id: int, page_data: list) -> dict:
+def run_qa_pipeline(run_id: int, page_data: list, target_url: str = "") -> dict:
     """
-    Runs after crawl completes: discovers flows, generates test cases,
-    generates bug reports from scan findings. Persists all to DB.
-    Returns summary dict for updating TestRun QA columns.
+    Full autonomous QA pipeline:
+      Step 1 — Discover flows
+      Step 2 — Generate test cases  [written as "pending" to DB]
+      Step 3 — Execute test cases with Playwright
+      Step 4 — Validate + update QATestCase status (pass/fail/skip)
+      Step 5 — Bug reports from scan findings + test failures
+      Step 6 — KPI scores from page data + test results
     """
+    from engines.kpi_engine import compute_composite_kpis
+    from engines.validation_engine import validate_test_case
+    from sqlalchemy import select as _select
+
     summary = {
         "total_flows": 0, "total_test_cases": 0,
+        "tests_passed": 0, "tests_failed": 0,
         "total_bugs": 0, "critical_bugs": 0,
         "high_bugs": 0, "medium_bugs": 0, "low_bugs": 0,
+        "kpis": {},
     }
 
     try:
-        # Step 1: Discover Flows
+        # ── Step 1: Discover Flows ────────────────────────────────────────────
         flows = discover_flows_as_dicts(page_data)
         summary["total_flows"] = len(flows)
+        logger.info(f"[qa_pipeline] run {run_id}: {len(flows)} flows discovered")
 
         flow_db_map = {}
         for flow in flows:
-            db_flow = QAFlow(
+            db.session.add(QAFlow(
                 run_id=run_id,
                 flow_id=flow["flow_id"],
                 flow_name=flow["flow_name"],
@@ -61,19 +64,22 @@ def run_qa_pipeline(run_id: int, page_data: list) -> dict:
                 description=flow.get("description"),
                 tags=flow.get("tags", []),
                 steps=flow.get("steps", []),
-            )
-            db.session.add(db_flow)
+            ))
         db.session.flush()
 
-        for db_flow in QAFlow.query.filter_by(run_id=run_id).all():
+        for db_flow in db.session.execute(
+            _select(QAFlow).where(QAFlow.run_id == run_id)
+        ).scalars().all():
             flow_db_map[db_flow.flow_id] = db_flow.id
 
-        # Step 2: Generate Test Cases
+        # ── Step 2: Generate Test Cases ───────────────────────────────────────
         test_cases = generate_test_cases_as_dicts(flows, run_id)
         summary["total_test_cases"] = len(test_cases)
+        logger.info(f"[qa_pipeline] run {run_id}: {len(test_cases)} test cases generated")
 
+        tc_db_ids = {}
         for tc in test_cases:
-            db.session.add(QATestCase(
+            db_tc = QATestCase(
                 run_id=run_id,
                 flow_id=tc.get("flow_id"),
                 qa_flow_db_id=flow_db_map.get(tc.get("flow_id") or ""),
@@ -87,11 +93,84 @@ def run_qa_pipeline(run_id: int, page_data: list) -> dict:
                 severity=tc.get("severity", "medium"),
                 tags=tc.get("tags", []),
                 playwright_snippet=tc.get("playwright_snippet"),
-            ))
+            )
+            db.session.add(db_tc)
+        db.session.flush()
 
-        # Step 3: Generate Bug Reports from scan findings
-        scan_bugs = generate_bugs_from_scan(page_data, run_id)
-        for bug in scan_bugs:
+        for db_tc in db.session.execute(
+            _select(QATestCase).where(QATestCase.run_id == run_id)
+        ).scalars().all():
+            tc_db_ids[db_tc.tc_id] = db_tc.id
+
+        # ── Step 3: Execute Test Cases ────────────────────────────────────────
+        execution_results: list[dict] = []
+        if test_cases and target_url:
+            logger.info(f"[qa_pipeline] run {run_id}: executing {len(test_cases)} test cases")
+            try:
+                execution_results = _run_tests_sync(test_cases, run_id, target_url)
+                summary["tests_passed"] = sum(1 for r in execution_results if r.get("status") == "pass")
+                summary["tests_failed"] = sum(1 for r in execution_results if r.get("status") in ("fail", "error", "timeout"))
+                logger.info(f"[qa_pipeline] run {run_id}: {summary['tests_passed']} passed / {summary['tests_failed']} failed")
+            except Exception as exec_err:
+                logger.error(f"[qa_pipeline] test execution error (non-fatal): {exec_err}", exc_info=True)
+        else:
+            if not target_url:
+                logger.warning(f"[qa_pipeline] run {run_id}: no target_url — skipping test execution")
+
+        # ── Step 4: Validate + update QATestCase rows ─────────────────────────
+        validation_results: list[dict] = []
+        result_map = {r["tc_id"]: r for r in execution_results}
+
+        for tc in test_cases:
+            tc_id  = tc["tc_id"]
+            er     = result_map.get(tc_id, {})
+            status = er.get("status", "pending")
+
+            try:
+                vr = validate_test_case(tc_id, tc.get("expected_result", ""), er)
+                validation_results.append(vr.to_dict() if hasattr(vr, "to_dict") else vars(vr))
+            except Exception:
+                validation_results.append({"tc_id": tc_id, "verdict": "inconclusive"})
+
+            db_status = {"pass": "pass", "fail": "fail", "error": "fail",
+                         "timeout": "fail", "skip": "skip"}.get(status, "pending")
+
+            db_tc_id = tc_db_ids.get(tc_id)
+            if db_tc_id:
+                db_tc_obj = db.session.get(QATestCase, db_tc_id)
+                if db_tc_obj:
+                    db_tc_obj.status        = db_status
+                    db_tc_obj.actual_result = er.get("actual_result")
+
+            if er:
+                db.session.add(QATestResult(
+                    run_id=run_id,
+                    test_case_id=tc_db_ids.get(tc_id),
+                    tc_id=tc_id,
+                    flow_id=tc.get("flow_id"),
+                    scenario=tc.get("scenario"),
+                    status=db_status,
+                    actual_result=er.get("actual_result"),
+                    failure_step=er.get("failure_step"),
+                    failure_reason=er.get("failure_reason"),
+                    duration_ms=er.get("duration_ms"),
+                    screenshot_path=er.get("screenshot_path"),
+                    step_results=er.get("step_results", []),
+                ))
+
+        # ── Step 5: Bugs — scan findings + test failures ──────────────────────
+        all_bugs = list(generate_bugs_from_scan(page_data, run_id))
+
+        if execution_results:
+            try:
+                test_bugs = generate_bugs_from_test_run(
+                    test_cases, execution_results, validation_results, run_id
+                )
+                all_bugs.extend(test_bugs)
+            except Exception as tb_err:
+                logger.warning(f"[qa_pipeline] test bug generation error (non-fatal): {tb_err}")
+
+        for bug in all_bugs:
             summary["total_bugs"] += 1
             sev_key = f"{bug.severity}_bugs"
             summary[sev_key] = summary.get(sev_key, 0) + 1
@@ -109,17 +188,82 @@ def run_qa_pipeline(run_id: int, page_data: list) -> dict:
                 actual_result=bug.actual_result,
                 suggested_fix=bug.suggested_fix,
                 screenshot_path=bug.screenshot_path,
-                source="scan",
+                source=getattr(bug, "source", "scan"),
+                tc_id=getattr(bug, "tc_id", None),
+                flow_id=getattr(bug, "flow_id", None),
+                playwright_snippet=getattr(bug, "playwright_snippet", None),
             ))
 
+        # ── Step 6: KPI Scores ────────────────────────────────────────────────
+        kpis = compute_composite_kpis(page_data, execution_results or None)
+        summary["kpis"] = kpis
+        logger.info(f"[qa_pipeline] run {run_id}: KPIs computed — health={kpis.get('site_health_score')}")
+
         db.session.commit()
-        logger.info(f"[qa_pipeline] run {run_id}: {summary}")
+        logger.info(
+            f"[qa_pipeline] run {run_id}: flows={summary['total_flows']} "
+            f"tests={summary['total_test_cases']} bugs={summary['total_bugs']} "
+            f"(critical={summary.get('critical_bugs',0)}, high={summary.get('high_bugs',0)})"
+        )
 
     except Exception as e:
         db.session.rollback()
         logger.error(f"[qa_pipeline] failed for run {run_id}: {e}", exc_info=True)
 
     return summary
+
+
+def _run_tests_sync(test_cases: list[dict], run_id: int, target_url: str) -> list[dict]:
+    """
+    Runs the async test runner in a dedicated event loop (safe for RQ workers).
+    Returns a list of execution result dicts.
+    """
+    import asyncio
+    from playwright.async_api import async_playwright
+    from engines.test_runner import run_all_test_cases
+
+    async def _execute():
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            context = await browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                ignore_https_errors=True,
+            )
+
+            # Authenticate before running tests if credentials are configured.
+            # This ensures navigation tests have a valid session and don't
+            # get redirected back to the login page mid-test.
+            try:
+                from crawler import _read_auth_config, _do_login
+                auth = _read_auth_config()
+                if auth:
+                    login_ok = await _do_login(context, auth)
+                    if login_ok:
+                        logger.info("[test_runner_auth] Session established for test execution")
+                    else:
+                        logger.warning("[test_runner_auth] Login failed — tests will run unauthenticated")
+            except Exception as auth_err:
+                logger.warning(f"[test_runner_auth] Auth setup error (non-fatal): {auth_err}")
+
+            try:
+                results = await run_all_test_cases(context, test_cases, run_id)
+                return [
+                    r.to_dict() if hasattr(r, "to_dict") else vars(r)
+                    for r in results
+                ]
+            finally:
+                await browser.close()
+
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_execute())
+    finally:
+        loop.close()
 
 def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: list = None):
     """
@@ -165,7 +309,8 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
     try:
         from crawler import main as run_crawler
         from app import _release_scan_slot
-        try :
+
+        try:
             result = asyncio.run(
                 run_crawler(
                     run_id, url, user_id, page_limit,
@@ -175,13 +320,29 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             )
         finally:
             _release_scan_slot()
+
     except Exception as e:
-        logger.error(f"Crawler failed for run {run_id}: {e}", exc_info=True)
+        logger.error(f"Crawler raised unexpectedly for run {run_id}: {e}", exc_info=True)
         with app.app_context():
             run = db.session.get(TestRun, run_id)
             if run:
                 run.status      = "failed"
+                run.error_detail = f"Crawler exception: {str(e)[:500]}"
                 run.finished_at = datetime.now(UTC)
+                db.session.commit()
+        return
+
+    # ── Handle pre-flight failure returned from crawler ───────────────────────
+    if result.get("status") == "target_unreachable":
+        error_msg = result.get("error_detail", "Target server could not be reached.")
+        logger.warning(f"[run {run_id}] Marking as target_unreachable: {error_msg}")
+        with app.app_context():
+            run = db.session.get(TestRun, run_id)
+            if run:
+                run.status       = "target_unreachable"   # new status value
+                run.error_detail = error_msg              # new column — see migration below
+                run.finished_at  = datetime.now(UTC)
+                run.confidence   = 0.0
                 db.session.commit()
         return
 
@@ -338,15 +499,44 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             if page_records:
                 db.session.bulk_save_objects(page_records)
             try:
-                qa_summary = run_qa_pipeline(run_id, pages)
-                run.total_bugs       = qa_summary.get("total_bugs", 0)
-                run.critical_bugs    = qa_summary.get("critical_bugs", 0)
-                run.high_bugs        = qa_summary.get("high_bugs", 0)
-                run.medium_bugs      = qa_summary.get("medium_bugs", 0)
-                run.low_bugs         = qa_summary.get("low_bugs", 0)
-                run.total_flows      = qa_summary.get("total_flows", 0)
-                run.total_test_cases = qa_summary.get("total_test_cases", 0)
-                run.qa_enabled       = True
+                qa_summary = run_qa_pipeline(run_id, pages, target_url=url)
+                kpis = qa_summary.get("kpis", {})
+
+                # KPI scores from KPI engine — these drive the dashboard cards
+                run.avg_performance_score   = kpis.get("avg_performance_score")
+                run.avg_accessibility_score = kpis.get("avg_accessibility_score")
+                run.avg_security_score      = kpis.get("avg_security_score")
+                run.avg_functional_score    = kpis.get("avg_functional_score")
+                run.avg_ui_form_score       = kpis.get("avg_ui_form_score")
+
+                # Override site health with KPI-computed value when present
+                if kpis.get("site_health_score") is not None:
+                    run.site_health_score = kpis["site_health_score"]
+                if kpis.get("risk_category"):
+                    run.risk_category = kpis["risk_category"]
+
+                # Issue counts from KPI engine
+                run.slow_pages_count           = kpis.get("slow_pages_count", 0)
+                run.total_broken_links         = kpis.get("total_broken_links", 0)
+                run.total_js_errors            = kpis.get("total_js_errors", 0)
+                run.total_accessibility_issues = kpis.get("total_accessibility_issues", 0)
+
+                # QA pipeline counts — guarded for pre-migration DBs
+                if hasattr(run, "total_bugs"):
+                    run.total_bugs       = qa_summary.get("total_bugs", 0)
+                    run.critical_bugs    = qa_summary.get("critical_bugs", 0)
+                    run.high_bugs        = qa_summary.get("high_bugs", 0)
+                    run.medium_bugs      = qa_summary.get("medium_bugs", 0)
+                    run.low_bugs         = qa_summary.get("low_bugs", 0)
+                if hasattr(run, "total_flows"):
+                    run.total_flows      = qa_summary.get("total_flows", 0)
+                if hasattr(run, "total_test_cases"):
+                    run.total_test_cases = qa_summary.get("total_test_cases", 0)
+                if hasattr(run, "tests_passed"):
+                    run.tests_passed     = qa_summary.get("tests_passed", 0)
+                    run.tests_failed     = qa_summary.get("tests_failed", 0)
+                if hasattr(run, "qa_enabled"):
+                    run.qa_enabled       = True
             except Exception as qa_err:
                 logger.error(f"QA pipeline error (non-fatal): {qa_err}", exc_info=True)
             # ── SINGLE ATOMIC COMMIT — TestRun + all PageResults ──────────────

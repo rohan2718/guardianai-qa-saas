@@ -66,6 +66,87 @@ CRAWL_DELAY_MS = int(os.environ.get("GUARDIAN_CRAWL_DELAY_MS", "500"))
 ANOMALY_FAILURE_THRESHOLD = int(os.environ.get("GUARDIAN_ANOMALY_THRESHOLD", "5"))
 
 
+# crawler.py  — add near the top, after imports
+
+import socket
+import urllib.request
+import urllib.error
+from urllib.parse import urlparse
+
+# ── Pre-flight reachability check ─────────────────────────────────────────────
+
+class TargetUnreachableError(Exception):
+    """Raised when the scan target cannot be contacted before Playwright starts."""
+    pass
+
+
+def _tcp_reachable(url: str, timeout: float = 5.0) -> tuple[bool, str]:
+    """
+    Attempt a raw TCP connection to host:port derived from the URL.
+    Returns (reachable: bool, reason: str).
+    """
+    parsed = urlparse(url)
+    host   = parsed.hostname
+    port   = parsed.port or (443 if parsed.scheme == "https" else 80)
+
+    if not host:
+        return False, "URL has no resolvable hostname"
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        if result == 0:
+            return True, "TCP connection succeeded"
+        return False, f"TCP connection refused (errno {result})"
+    except socket.gaierror as e:
+        return False, f"DNS resolution failed: {e}"
+    except socket.timeout:
+        return False, f"TCP connection timed out after {timeout}s"
+    except OSError as e:
+        return False, f"Network error: {e}"
+
+
+def _http_reachable(url: str, timeout: float = 8.0) -> tuple[bool, str]:
+    """
+    Fallback: attempt an HTTP HEAD request.
+    Useful when a server accepts TCP but the TCP check gives a false negative
+    (e.g., behind a transparent proxy).
+    """
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        req.add_header("User-Agent", "GuardianAI-Preflight/1.0")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return True, f"HTTP HEAD {resp.status}"
+    except urllib.error.HTTPError as e:
+        # 4xx/5xx means server is up, just unhappy — still reachable
+        return True, f"HTTP HEAD {e.code} (server is up)"
+    except urllib.error.URLError as e:
+        return False, f"HTTP HEAD failed: {e.reason}"
+    except Exception as e:
+        return False, f"HTTP HEAD error: {e}"
+
+
+def preflight_check(url: str) -> None:
+    """
+    Raises TargetUnreachableError if the target cannot be contacted.
+    Call this before launching Playwright.
+    """
+    tcp_ok, tcp_reason = _tcp_reachable(url)
+    if tcp_ok:
+        logger.info(f"[preflight] {url} → reachable ({tcp_reason})")
+        return
+
+    logger.warning(f"[preflight] TCP failed: {tcp_reason} — trying HTTP HEAD")
+    http_ok, http_reason = _http_reachable(url)
+    if http_ok:
+        logger.info(f"[preflight] {url} → reachable via HTTP ({http_reason})")
+        return
+
+    raise TargetUnreachableError(
+        f"Target unreachable. TCP: {tcp_reason} | HTTP: {http_reason}"
+    )
 # ── URL Utilities ──────────────────────────────────────────────────────────────
 
 def normalize_url(url: str) -> str:
@@ -484,8 +565,17 @@ def _read_auth_config() -> dict | None:
         CRAWLER_SUCCESS_URL=/dashboard
         CRAWLER_SKIP_URLS=/logout,/signout
     """
+    # Re-read .env at call time — ensures RQ worker threads always pick up auth vars
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        from pathlib import Path as _Path
+        _load_dotenv(dotenv_path=_Path(__file__).resolve().parent / ".env", override=True)
+    except Exception:
+        pass
+
     username = os.environ.get("CRAWLER_USERNAME", "").strip()
     if not username:
+        logger.debug("[auth] CRAWLER_USERNAME not set — skipping auth")
         return None
 
     return {
@@ -795,16 +885,15 @@ async def crawl_site(
             }
 
             # ── Compute health score ───────────────────────────────────────
-            scores_for_health = {
-                "performance_score":   perf_score_data.get("score"),
-                "accessibility_score": a11y_score_data.get("score"),
-                "security_score":      sec_score_data.get("score"),
-                "functional_score":    func_score_data.get("score"),
-                "ui_form_score":       ui_form_score_data.get("score"),
-            }
-            health_data = compute_page_health_score(scores_for_health, active_filters)
-            page_obj["health_score"]     = health_data.get("score")
-            page_obj["health_breakdown"] = health_data.get("breakdown", {})
+            health_data = compute_page_health_score(
+                performance_score   = perf_score_data.get("score"),
+                accessibility_score = a11y_score_data.get("score"),
+                security_score      = sec_score_data.get("score"),
+                functional_score    = func_score_data.get("score"),
+                ui_form_score       = ui_form_score_data.get("score"),
+            )
+            page_obj["health_score"]     = health_data.get("health_score")
+            page_obj["health_breakdown"] = health_data.get("components", {})
             page_obj["risk_category"]    = health_data.get("risk_category")
             page_obj["functional_score"] = func_score_data.get("score")
             page_obj["ui_form_score"]    = ui_form_score_data.get("score")
@@ -939,66 +1028,89 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
 # ── Entry Point ────────────────────────────────────────────────────────────────
 
 async def main(
-    run_id:         int,
-    start_url:      str,
-    user_id:        int,
-    page_limit=None,
+    run_id: int,
+    url: str,
+    user_id: int,
+    page_limit,
     update_fn=None,
-    active_filters: list | None = None,
-):
-    visited   = set()
-    page_data = []
+    active_filters=None,
+) -> dict:
+    """
+    Entry point called by tasks.run_scan.
+    Returns result dict — NEVER raises; unreachable targets return
+    a structured failure payload so tasks.py can persist diagnostics.
+    """
 
+    # ── Pre-flight reachability check ──────────────────────────────────────
     try:
-        max_pages = int(page_limit) if page_limit not in (None, "", "None", "null") else None
-    except (TypeError, ValueError):
-        max_pages = None
+        preflight_check(url)
+    except TargetUnreachableError as e:
+        logger.error(f"[run {run_id}] Pre-flight failed: {e}")
+        # Return a structured failure dict — tasks.py handles status
+        return {
+            "status": "target_unreachable",
+            "error_detail": str(e),
+            "pages": [],
+            "site_health": {},
+            "confidence": 0.0,
+            "ai_summary": None,
+        }
+
+    # ── Normal Playwright crawl continues below ─────────────────────────────
+    visited: set    = set()
+    page_data: list = []
+    resolved_filters = active_filters or list(VALID_FILTERS)
 
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
-            viewport={"width": 1280, "height": 800},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
             ignore_https_errors=True,
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
 
+        # Attempt login if credentials are configured
         auth = _read_auth_config()
         if auth:
             login_ok = await _do_login(context, auth)
             if login_ok:
                 logger.info("[auth] Session established — crawling as authenticated user")
-                success_url = auth.get("success_url", "").strip()
-                if success_url:
-                    parsed = urlparse(start_url)
-                    start_url = f"{parsed.scheme}://{parsed.netloc}{success_url}"
-                    logger.info(f"[auth] Crawl start redirected to: {start_url}")
+                success_path = auth.get("success_url", "").strip()
+                if success_path:
+                    from urllib.parse import urlparse as _up
+                    _p = _up(url)
+                    url = f"{_p.scheme}://{_p.netloc}{success_path}"
+                    logger.info(f"[auth] Crawl start redirected to: {url}")
             else:
                 logger.warning("[auth] Login failed — crawling as unauthenticated user")
 
         try:
             await crawl_site(
                 context=context,
-                base_url=start_url,
+                base_url=url,
                 run_id=run_id,
                 visited=visited,
                 page_data=page_data,
-                max_pages=max_pages,
-                active_filters=active_filters,
+                max_pages=page_limit,
+                active_filters=resolved_filters,
                 update_fn=update_fn,
             )
         finally:
-            await context.close()
             await browser.close()
 
-    return await build_reports(run_id, page_data, active_filters)
+    # Build reports and return structured result dict
+    return await build_reports(run_id, page_data, resolved_filters)
 
 
-def run_crawler(run_id, start_url, user_id, page_limit=None, update_fn=None, active_filters=None):
+def run_crawler(run_id, url, user_id, page_limit=None, update_fn=None, active_filters=None):
     """Sync entry point called by RQ worker via tasks.py."""
     return asyncio.run(
         main(
             run_id=run_id,
-            start_url=start_url,
+            url=url,
             user_id=user_id,
             page_limit=page_limit,
             update_fn=update_fn,

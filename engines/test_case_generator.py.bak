@@ -35,7 +35,6 @@ class TestStep:
     action: str          # navigate|fill|click|submit|assert|wait
     target: Optional[str] = None   # CSS selector or URL
     value: Optional[str] = None    # value to type (fill action)
-    page_url: Optional[str] = None # destination URL (used as nav fallback)
 
 
 @dataclass
@@ -73,7 +72,6 @@ class TestCase:
                     "action":      s.action,
                     "target":      s.target,
                     "value":       s.value,
-                    "page_url":    getattr(s, "page_url", ""),
                 }
                 for s in self.steps
             ],
@@ -275,7 +273,6 @@ def _build_test_steps(flow_dict: dict) -> list[TestStep]:
             action=action,
             target=target,
             value=value,
-            page_url=s.get("page_url", ""),   # destination URL for nav fallback
         ))
 
     return test_steps
