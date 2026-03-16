@@ -1,17 +1,27 @@
 """
-engines/flow_discovery.py — GuardianAI Autonomous QA
-Flow Discovery Engine: builds user journey maps from crawler page_data.
+engines/flow_discovery.py — GuardianAI Autonomous QA  (v2)
+Flow Discovery Engine: builds real user journey maps from crawler page_data.
 
-Consumes existing page_object dicts (url, forms, connected_pages, nav_menus,
-form_purpose, ui_elements) — zero new crawl infrastructure needed.
-
-Output: list[FlowDefinition] — structured user flows ready for test generation.
+KEY CHANGES v2:
+  - _build_link_text_index() builds a {source_url: {dest_url: link_text}} map
+    from the enriched nav_menus[].links and sidebar_links collected by crawler.
+  - _build_navigation_flow() now uses real link text for step descriptions and
+    generates working Playwright selectors (e.g. get_by_role("link", name=…)).
+  - Flow names use actual link labels instead of page <title> tags, which fixes
+    the "ATIRA → ATIRA → ATIRA" problem caused by identical page titles.
+  - Fallback chain when link text is unavailable:
+      1. Link text from nav_menus / sidebar_links index
+      2. Last URL path segment, title-cased
+      3. Page <title> if different from previous step's title
+  - Duplicate consecutive labels are de-duplicated in flow names.
+  - Breadcrumb-based flows added as a bonus source of real user paths.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import urlparse
@@ -36,7 +46,7 @@ class FlowStep:
 @dataclass
 class FlowDefinition:
     flow_id: str                   # e.g. "flow_login_001"
-    flow_name: str                 # e.g. "User Login"
+    flow_name: str                 # e.g. "Login Flow"
     flow_type: str                 # login|registration|checkout|navigation|search|contact|generic
     priority: str                  # critical|high|medium|low
     steps: list[FlowStep] = field(default_factory=list)
@@ -73,21 +83,21 @@ class FlowDefinition:
 
 # ── URL Classification ─────────────────────────────────────────────────────────
 
-# Slug patterns → (flow_type, priority, label)
 _URL_PATTERNS = [
-    (r"/(login|signin|log-in|sign-in)",         "login",        "critical", "Login"),
-    (r"/(logout|signout|log-out|sign-out)",      "logout",       "high",     "Logout"),
-    (r"/(register|signup|sign-up|create.account)","registration","critical", "Registration"),
-    (r"/(checkout|payment|pay|order)",           "checkout",     "critical", "Checkout"),
-    (r"/(cart|basket|bag)",                      "cart",         "high",     "Cart"),
-    (r"/(product|item|shop|store|catalogue)",    "shop",         "high",     "Product Browse"),
-    (r"/(search|find|query|results)",            "search",       "medium",   "Search"),
-    (r"/(contact|support|help|feedback)",        "contact",      "medium",   "Contact"),
-    (r"/(profile|account|settings|preferences)", "profile",      "medium",   "Profile"),
-    (r"/(dashboard|home|overview|summary)",      "dashboard",    "high",     "Dashboard"),
-    (r"/(password.reset|forgot.password)",       "password_reset","high",    "Password Reset"),
-    (r"/(subscribe|newsletter|signup)",          "newsletter",   "low",      "Newsletter"),
+    (r"/(login|signin|log-in|sign-in)",          "login",         "critical", "Login"),
+    (r"/(logout|signout|log-out|sign-out)",       "logout",        "high",     "Logout"),
+    (r"/(register|signup|sign-up|create.account)","registration",  "critical", "Registration"),
+    (r"/(checkout|payment|pay|order)",            "checkout",      "critical", "Checkout"),
+    (r"/(cart|basket|bag)",                       "cart",          "high",     "Cart"),
+    (r"/(product|item|shop|store|catalogue)",     "shop",          "high",     "Product Browse"),
+    (r"/(search|find|query|results)",             "search",        "medium",   "Search"),
+    (r"/(contact|support|help|feedback)",         "contact",       "medium",   "Contact"),
+    (r"/(profile|account|settings|preferences)",  "profile",       "medium",   "Profile"),
+    (r"/(dashboard|home|overview|summary)",       "dashboard",     "high",     "Dashboard"),
+    (r"/(password.reset|forgot.password)",        "password_reset","high",     "Password Reset"),
+    (r"/(subscribe|newsletter|signup)",           "newsletter",    "low",      "Newsletter"),
 ]
+
 
 def _classify_url(url: str) -> tuple[str, str, str]:
     """Returns (flow_type, priority, label) for a URL path."""
@@ -103,14 +113,70 @@ def _is_root(url: str) -> bool:
     return parsed.path in ("", "/", "/index", "/home")
 
 
-# ── Page Index Builder ─────────────────────────────────────────────────────────
+def _path_label(url: str) -> str:
+    """Derive a human-readable label from a URL path segment."""
+    parts = [p for p in urlparse(url).path.split("/") if p]
+    if not parts:
+        return "Home"
+    return parts[-1].replace("-", " ").replace("_", " ").title()
+
+
+# ── Page Index ─────────────────────────────────────────────────────────────────
 
 def _build_page_index(page_data: list[dict]) -> dict[str, dict]:
     """url → page_object. Normalises trailing slashes."""
     return {p["url"].rstrip("/"): p for p in page_data if p.get("url")}
 
 
-# ── Flow Builders ──────────────────────────────────────────────────────────────
+# ── Link Text Index ────────────────────────────────────────────────────────────
+
+def _build_link_text_index(page_data: list[dict]) -> dict[str, dict[str, str]]:
+    """
+    Builds a two-level map:
+        index[source_page_url][destination_url] = "link text"
+
+    Sources used (in order of reliability):
+      1. nav_menus[].links[]  — enriched nav link objects from crawler v2
+      2. sidebar_links[]      — enriched sidebar link objects from crawler v2
+
+    This index enables flow_discovery to say:
+        "Click 'Country Master'"
+    instead of:
+        "Follow link to ATIRA"
+
+    Falls back gracefully when crawler v1 data (no .links array) is present.
+    """
+    index: dict[str, dict[str, str]] = defaultdict(dict)
+
+    for page in page_data:
+        source = page["url"].rstrip("/")
+
+        # ── Source 1: nav_menus (each nav has a .links array in v2) ───────
+        for nav in (page.get("nav_menus") or []):
+            for link in (nav.get("links") or []):
+                href = (link.get("href") or "").rstrip("/")
+                text = (
+                    link.get("text") or
+                    link.get("aria_label") or
+                    link.get("title") or
+                    ""
+                ).strip()
+                if href and text:
+                    # Prefer first seen (earlier nav = primary navigation)
+                    if href not in index[source]:
+                        index[source][href] = text
+
+        # ── Source 2: sidebar_links ────────────────────────────────────────
+        for link in (page.get("sidebar_links") or []):
+            href = (link.get("href") or "").rstrip("/")
+            text = (link.get("text") or link.get("aria_label") or "").strip()
+            if href and text and href not in index[source]:
+                index[source][href] = text
+
+    return dict(index)
+
+
+# ── Step Builder ───────────────────────────────────────────────────────────────
 
 def _make_step(n: int, page: dict, action: str, detail: str,
                selector: str = None, outcome: str = None,
@@ -127,23 +193,33 @@ def _make_step(n: int, page: dict, action: str, detail: str,
     )
 
 
+def _playwright_link_selector(link_text: str) -> str:
+    """
+    Generates a robust Playwright selector from link text.
+    Prefers get_by_role pattern string for readable output.
+    """
+    # Escape any quotes in the link text
+    safe = link_text.replace('"', '\\"')
+    return f'a:has-text("{safe}"), [role="menuitem"]:has-text("{safe}"), [role="link"]:has-text("{safe}")'
+
+
+# ── Form Flow Builder ──────────────────────────────────────────────────────────
+
 def _build_form_flow(page: dict, idx: dict, flow_counter: list) -> Optional[FlowDefinition]:
     """
     Creates a flow for any page that has a recognisable form.
-    Works with form_purpose already detected by the crawler's JS eval.
+    Generates real field selectors and meaningful expected outcomes.
     """
     forms = page.get("forms") or []
     if not forms:
         return None
 
-    # Pick the most interesting form (prefer Login/Checkout over generic)
     purpose_rank = {
         "Login": 0, "Checkout": 1, "Registration": 2, "Search": 3,
         "Contact": 4, "Newsletter": 5, "Feedback": 6,
     }
     forms_with_purpose = [f for f in forms if f.get("form_purpose")]
     if not forms_with_purpose:
-        # Fall back to any form with a submit button
         forms_with_purpose = [f for f in forms if f.get("has_submit")]
     if not forms_with_purpose:
         return None
@@ -174,30 +250,38 @@ def _build_form_flow(page: dict, idx: dict, flow_counter: list) -> Optional[Flow
     steps: list[FlowStep] = []
     n = 1
 
-    # Step 1: Navigate to homepage (if there is one and this isn't root)
     root_page = next((p for u, p in idx.items() if _is_root(u)), None)
     if root_page and root_page["url"] != page["url"]:
-        steps.append(_make_step(n, root_page, "navigate",
-                                "Open the homepage",
-                                outcome="Homepage loads successfully"))
+        steps.append(_make_step(
+            n, root_page, "navigate", "Open the homepage",
+            outcome="Homepage loads successfully"
+        ))
         n += 1
 
-    # Step 2: Navigate to form page
-    steps.append(_make_step(n, page, "navigate",
-                            f"Navigate to {purpose.lower()} page",
-                            outcome=f"{purpose} page loads, form is visible"))
+    steps.append(_make_step(
+        n, page, "navigate",
+        f"Navigate to {purpose.lower()} page",
+        outcome=f"{purpose} page loads — form is visible"
+    ))
     n += 1
 
-    # Steps 3+: Fill each visible field
+    # Fill each visible field with typed test values
     for f in (target_form.get("fields") or []):
         if f.get("type") in ("submit", "button", "reset", "hidden", "image"):
             continue
         if f.get("readonly") or f.get("disabled"):
             continue
 
-        label = f.get("display_name") or f.get("placeholder") or f.get("name") or f.get("type") or "field"
+        label = (
+            f.get("display_name") or
+            f.get("placeholder") or
+            f.get("name") or
+            f.get("type") or
+            "field"
+        )
         ftype = f.get("type") or "text"
 
+        # Generate realistic test values
         if ftype == "email":
             test_val = "testuser@example.com"
         elif ftype == "password":
@@ -216,11 +300,15 @@ def _build_form_flow(page: dict, idx: dict, flow_counter: list) -> Optional[Flow
         else:
             test_val = f"Test {label}"
 
+        # Build a real, prioritised selector
         selector = None
         if f.get("id"):
             selector = f'#{f["id"]}'
         elif f.get("name"):
             selector = f'[name="{f["name"]}"]'
+        elif label:
+            safe_label = label.replace('"', '\\"')
+            selector = f'input[placeholder="{safe_label}"], [aria-label="{safe_label}"]'
 
         steps.append(_make_step(
             n, page, "fill_form",
@@ -231,7 +319,6 @@ def _build_form_flow(page: dict, idx: dict, flow_counter: list) -> Optional[Flow
         ))
         n += 1
 
-    # Final step: submit
     submit_label = target_form.get("submit_label") or "Submit"
     expected_after_submit = {
         "Login":        "User is redirected to dashboard or protected page",
@@ -243,10 +330,11 @@ def _build_form_flow(page: dict, idx: dict, flow_counter: list) -> Optional[Flow
     }.get(purpose, "Form submits without errors; success state is visible")
 
     steps.append(_make_step(
-    n, page, "submit",
-    f"Click '{submit_label}' button",
-    outcome=expected_after_submit,
-    form_purpose=purpose,
+        n, page, "submit",
+        f"Click '{submit_label}' button",
+        selector=f'button[type="submit"], input[type="submit"], button:has-text("{submit_label}")',
+        outcome=expected_after_submit,
+        form_purpose=purpose,
     ))
 
     return FlowDefinition(
@@ -262,44 +350,168 @@ def _build_form_flow(page: dict, idx: dict, flow_counter: list) -> Optional[Flow
     )
 
 
-def _build_navigation_flow(start_page: dict, page_chain: list[dict],
-                           flow_counter: list) -> FlowDefinition:
-    """Builds a navigation flow through a sequence of linked pages."""
+# ── Navigation Flow Builder ────────────────────────────────────────────────────
+
+def _build_navigation_flow(
+    start_page: dict,
+    page_chain: list[dict],
+    flow_counter: list,
+    link_text_index: dict = None,
+) -> FlowDefinition:
+    """
+    Builds a navigation flow through a sequence of linked pages.
+
+    Uses the link_text_index to get the actual text of the link that
+    connects page N to page N+1. This fixes the "ATIRA → ATIRA" problem
+    by using real nav labels instead of page <title> tags.
+
+    Selector strategy:
+      - If link text found in index → generate :has-text() selector
+      - If no link text → use URL path label as fallback
+    """
+    link_text_index = link_text_index or {}
+
     flow_counter[0] += 1
     fid = f"flow_navigation_{flow_counter[0]:03d}"
 
     steps: list[FlowStep] = []
+    step_labels: list[str] = []
+
     for i, page in enumerate(page_chain, 1):
         if i == 1:
-            detail = f"Open {page.get('title') or urlparse(page['url']).path}"
+            # First step: navigate to entry page
+            page_label = page.get("title") or _path_label(page["url"])
+            detail = f"Open {page_label}"
             action = "navigate"
+            selector = None
+            outcome = f"Page loads successfully — {page_label}"
+            step_labels.append(page_label)
         else:
-            prev_url = page_chain[i - 2]["url"]
-            detail = f"Follow link to {page.get('title') or urlparse(page['url']).path}"
-            action = "click"
+            prev_page = page_chain[i - 2]
+            prev_url  = prev_page["url"].rstrip("/")
+            curr_url  = page["url"].rstrip("/")
+
+            # Look up the actual link text used to navigate to this page
+            link_text = (link_text_index.get(prev_url) or {}).get(curr_url)
+
+            if not link_text:
+                # Fallback 1: URL path segment
+                link_text = _path_label(page["url"])
+
+            detail   = f'Click "{link_text}"'
+            action   = "click"
+            selector = _playwright_link_selector(link_text)
+            outcome  = (
+                f"Page loads — {page.get('title') or _path_label(page['url'])} "
+                f"is visible"
+            )
+            step_labels.append(link_text)
 
         steps.append(_make_step(
             i, page, action, detail,
-            outcome=f"Page loads with status 200, content is visible",
+            selector=selector,
+            outcome=outcome,
         ))
 
+    # ── Build a meaningful flow name from real link labels ─────────────────
+    # De-duplicate consecutive identical labels (the root cause of "ATIRA → ATIRA")
+    deduped: list[str] = []
+    for label in step_labels:
+        if not deduped or label.lower().strip() != deduped[-1].lower().strip():
+            deduped.append(label)
+
+    # If dedup collapsed everything to 1 label, all pages have identical titles
+    # → fall back to URL path segments which are always unique
+    if len(deduped) < 2:
+        deduped = [_path_label(p["url"]) for p in page_chain]
+        # Deduplicate again with path labels
+        deduped_2: list[str] = []
+        for label in deduped:
+            if not deduped_2 or label != deduped_2[-1]:
+                deduped_2.append(label)
+        deduped = deduped_2
+
+    flow_name = " → ".join(s[:30] for s in deduped)
+
+    # Classify the destination for type/priority
     last = page_chain[-1]
-    ft, priority, label = _classify_url(last["url"])
-    name = " → ".join(
-        (p.get("title") or urlparse(p["url"]).path or "/")[:25]
-        for p in page_chain
-    )
+    ft, priority, _ = _classify_url(last["url"])
+    # Navigation flows that don't match a special URL pattern stay as "navigation"
+    if ft in ("login", "registration", "checkout"):
+        flow_type = ft
+    else:
+        flow_type = "navigation"
 
     return FlowDefinition(
         flow_id=fid,
-        flow_name=f"Navigation: {name}",
-        flow_type=ft,
-        priority=priority,
+        flow_name=flow_name,
+        flow_type=flow_type,
+        priority=priority if flow_type != "navigation" else "medium",
         steps=steps,
         entry_url=page_chain[0]["url"],
         exit_url=last["url"],
-        description=f"Tests navigation through {len(page_chain)} pages",
+        description=f"Tests navigation: {flow_name}",
         tags=["navigation"],
+    )
+
+
+# ── Breadcrumb Flow Builder ────────────────────────────────────────────────────
+
+def _build_breadcrumb_flow(page: dict, flow_counter: list) -> Optional[FlowDefinition]:
+    """
+    Builds a navigation flow from breadcrumb data when available.
+    Breadcrumbs are the highest-signal source of real user journeys.
+    Example: Home → Products → Widget A → Specifications
+    """
+    breadcrumbs = page.get("breadcrumbs") or {}
+    items = breadcrumbs.get("items") or []
+
+    if len(items) < 2:
+        return None
+
+    # Remove empty/whitespace items
+    items = [i.strip() for i in items if i and i.strip()]
+    if len(items) < 2:
+        return None
+
+    flow_counter[0] += 1
+    fid = f"flow_breadcrumb_{flow_counter[0]:03d}"
+
+    # Build synthetic steps from breadcrumb labels
+    steps: list[FlowStep] = []
+    for i, label in enumerate(items, 1):
+        if i == 1:
+            action = "navigate"
+            detail = f"Open {label}"
+            selector = None
+        else:
+            action = "click"
+            safe = label.replace('"', '\\"')
+            detail = f'Click "{label}" in breadcrumb'
+            selector = f'[aria-label*="breadcrumb"] a:has-text("{safe}"), .breadcrumb a:has-text("{safe}")'
+
+        steps.append(FlowStep(
+            step_number=i,
+            page_url=page["url"],
+            page_title=page.get("title") or label,
+            action=action,
+            action_detail=detail,
+            element_selector=selector,
+            expected_outcome=f"{label} page loads successfully",
+        ))
+
+    flow_name = " → ".join(items[:4])
+
+    return FlowDefinition(
+        flow_id=fid,
+        flow_name=flow_name,
+        flow_type="navigation",
+        priority="medium",
+        steps=steps,
+        entry_url=page["url"],
+        exit_url=page["url"],
+        description=f"Breadcrumb path: {flow_name}",
+        tags=["breadcrumb", "navigation"],
     )
 
 
@@ -310,19 +522,24 @@ def discover_flows(page_data: list[dict]) -> list[FlowDefinition]:
     Main entry point. Accepts the page_data list produced by crawler.py
     and returns a list of FlowDefinition objects.
 
+    Pipeline:
+      1. Form-based flows (login, checkout, registration) — highest priority
+      2. Navigation flows using real link text from nav_menus / sidebar_links
+      3. Breadcrumb flows — when present, highest fidelity paths
+      4. De-duplicate and sort by priority
+
     Integration: call from tasks.py after crawler completes, before persist.
     """
     if not page_data:
         return []
 
-    idx = _build_page_index(page_data)
+    idx              = _build_page_index(page_data)
+    link_text_index  = _build_link_text_index(page_data)
     flows: list[FlowDefinition] = []
-    flow_counter = [0]   # mutable counter shared across builders
-
+    flow_counter     = [0]
     seen_form_types: set[str] = set()
 
-    # ── 1. Form-based flows (highest value — login, checkout, registration) ──
-    # Sort pages so critical forms (login, checkout) are discovered first
+    # ── 1. Form-based flows ───────────────────────────────────────────────────
     priority_order = {
         "Login": 0, "Checkout": 1, "Registration": 2,
         "Search": 3, "Contact": 4,
@@ -342,50 +559,74 @@ def discover_flows(page_data: list[dict]) -> list[FlowDefinition]:
             flows.append(flow)
             seen_form_types.add(flow.flow_type)
 
-    # ── 2. Navigation flows through connected pages ──────────────────────────
-    # Build simple 2–4 page chains from connected_pages graph
+    # ── 2. Navigation flows using link text index ──────────────────────────────
     root_pages = [p for p in page_data if _is_root(p["url"])]
     if not root_pages:
-        root_pages = page_data[:1]  # fall back to first page
+        root_pages = page_data[:1]
 
     visited_chains: set[tuple] = set()
 
     for root in root_pages[:2]:
         connected = root.get("connected_pages") or []
-        for linked_url in connected[:8]:   # cap fan-out
+        for linked_url in connected[:10]:
             linked_url_norm = linked_url.rstrip("/")
             linked_page = idx.get(linked_url_norm)
             if not linked_page:
                 continue
 
-            chain_key = (root["url"], linked_url_norm)
+            chain_key = (root["url"].rstrip("/"), linked_url_norm)
             if chain_key in visited_chains:
                 continue
             visited_chains.add(chain_key)
 
             chain = [root, linked_page]
 
-            # Try to extend to depth 3 (e.g. Home → Products → Product Detail)
+            # Try to extend chain to depth 3
             linked_connected = linked_page.get("connected_pages") or []
-            for deep_url in linked_connected[:4]:
+            for deep_url in linked_connected[:5]:
                 deep_norm = deep_url.rstrip("/")
                 deep_page = idx.get(deep_norm)
-                if deep_page and deep_norm not in (root["url"].rstrip("/"), linked_url_norm):
+                if (deep_page and
+                    deep_norm not in (root["url"].rstrip("/"), linked_url_norm)):
                     chain.append(deep_page)
                     break
 
             if len(chain) >= 2:
-                flows.append(_build_navigation_flow(root, chain, flow_counter))
+                flows.append(_build_navigation_flow(
+                    root, chain, flow_counter, link_text_index
+                ))
 
-        # Cap total navigation flows
-        if len([f for f in flows if f.flow_type == "navigation"]) >= 5:
+        if len([f for f in flows if f.flow_type == "navigation"]) >= 6:
             break
 
-    # ── 3. De-duplicate and sort by priority ─────────────────────────────────
+    # ── 3. Breadcrumb flows ────────────────────────────────────────────────────
+    breadcrumb_flows_added = 0
+    for page in page_data:
+        if breadcrumb_flows_added >= 3:
+            break
+        bc_flow = _build_breadcrumb_flow(page, flow_counter)
+        if bc_flow:
+            flows.append(bc_flow)
+            breadcrumb_flows_added += 1
+
+    # ── 4. Deduplicate by flow_name ────────────────────────────────────────────
+    seen_names: set[str] = set()
+    unique_flows: list[FlowDefinition] = []
+    for f in flows:
+        name_key = f.flow_name.lower().strip()
+        if name_key not in seen_names:
+            seen_names.add(name_key)
+            unique_flows.append(f)
+    flows = unique_flows
+
+    # ── 5. Sort by priority ────────────────────────────────────────────────────
     priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     flows.sort(key=lambda f: priority_rank.get(f.priority, 9))
 
-    logger.info(f"[flow_discovery] Discovered {len(flows)} flows from {len(page_data)} pages")
+    logger.info(
+        f"[flow_discovery] Discovered {len(flows)} flows from {len(page_data)} pages "
+        f"(link_text_index covers {len(link_text_index)} source pages)"
+    )
     return flows
 
 

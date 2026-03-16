@@ -1,6 +1,10 @@
 """
 crawler.py — GuardianAI Production Refactor
-Changes:
+Changes v2 (QA Intelligence upgrade):
+  - nav_menus now captures full link text, href, aria-label per item
+  - sidebar_links captured with text + href
+  - JS errors capture message + stack trace + source location
+  - console errors also captured (type="error")
   - Broken links split into: broken_navigation_links, failed_assets, third_party_failures
   - Navigation link validation via context.request.get() (no new pages)
   - functional_score uses ONLY broken_navigation_links
@@ -8,7 +12,6 @@ Changes:
   - Rate limiting: configurable delay between pages
   - Crawl anomaly detection
   - Improved timeout handling with tiered fallback
-  - Logging granularity improvements
 """
 
 import asyncio
@@ -85,48 +88,38 @@ def is_asset_url(url: str) -> bool:
 def is_third_party(base_url: str, url: str) -> bool:
     base_netloc = urlparse(base_url).netloc.lstrip("www.")
     url_netloc  = urlparse(url).netloc.lstrip("www.")
-    return url_netloc != base_netloc and url_netloc != ""
+    return base_netloc != url_netloc
 
 
-# ── Filter Helper ──────────────────────────────────────────────────────────────
-
-def _filter_active(active_filters, key: str) -> bool:
+def _filter_active(active_filters, name: str) -> bool:
     if not active_filters:
         return True
-    return key in active_filters
+    return name in active_filters
 
 
-# ── ETA Tracker ───────────────────────────────────────────────────────────────
+# ── ETA Tracker ────────────────────────────────────────────────────────────────
 
 class ETATracker:
     def __init__(self):
-        self.page_times: list[float] = []
+        self._times: list[float] = []
 
-    def record_page(self, elapsed_s: float):
-        self.page_times.append(elapsed_s)
+    def record(self, elapsed_ms: float):
+        self._times.append(elapsed_ms)
+        if len(self._times) > 10:
+            self._times.pop(0)
 
-    def avg_time(self) -> float | None:
-        if not self.page_times:
-            return None
-        return sum(self.page_times) / len(self.page_times)
+    def avg_ms(self) -> float:
+        return sum(self._times) / len(self._times) if self._times else 0.0
 
-    def eta_seconds(self, remaining: int) -> float | None:
-        avg = self.avg_time()
-        if avg is None or remaining <= 0:
-            return None
-        return round(avg * remaining, 1)
+    def eta(self, remaining: int) -> float:
+        return (self.avg_ms() * remaining) / 1000.0
 
 
-# ── Broken Link Classifier ─────────────────────────────────────────────────────
+# ── Link Classification ────────────────────────────────────────────────────────
 
-async def classify_links(context, page, base_url: str) -> dict:
+async def classify_links(page, base_url: str, context) -> dict:
     """
-    Classifies all <a href> links on a page into:
-      - broken_navigation_links: internal anchor links returning 4xx/5xx
-      - failed_assets:           images/scripts/fonts/media that failed to load
-      - third_party_failures:    external resources that failed
-
-    Uses context.request.get() for navigation links — no new pages opened.
+    Validates internal navigation links.
     Asset failures come from the response listener already attached to the page.
     """
     broken_navigation_links = []
@@ -178,19 +171,17 @@ async def classify_links(context, page, base_url: str) -> dict:
                 pass
         except Exception as e:
             err_str = str(e).lower()
-            # Timeout or net::ERR_* = genuinely broken
             if "timeout" in err_str or "err_" in err_str or "net::" in err_str:
                 broken_navigation_links.append({
                     "url": href,
                     "status": None,
                     "error": str(e)[:120],
                 })
-            # Otherwise (e.g. SSL mismatch on internal dev URLs) skip
 
     return {
         "broken_navigation_links": broken_navigation_links,
-        "failed_assets": failed_assets,           # populated from response listener
-        "third_party_failures": third_party_failures,  # populated from response listener
+        "failed_assets": failed_assets,
+        "third_party_failures": third_party_failures,
         "internal_links": list(dict.fromkeys(internal_links)),
     }
 
@@ -199,80 +190,34 @@ async def classify_links(context, page, base_url: str) -> dict:
 
 async def capture_dom_elements(page) -> dict:
     try:
-        # ── Wait for DOM to stabilise after page load ──
-        # networkidle ensures async-injected elements (cookie banners, chat widgets,
-        # dynamic nav) have finished rendering before we snapshot element state.
         try:
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
-            pass  # Timeout is acceptable — proceed with current DOM state
+            pass
 
         data = await page.evaluate("""() => {
+            // ── Visibility helpers ──────────────────────────────────────────
 
-            // ── VISIBILITY HELPERS ────────────────────────────────────────────
-
-            /**
-             * isElementVisible(el)
-             * Returns true only when ALL of the following are true:
-             *   1. Element is in the DOM (connected)
-             *   2. offsetParent is not null (not display:none on self or ancestor)
-             *   3. computed display is not 'none'
-             *   4. computed visibility is not 'hidden' or 'collapse'
-             *   5. computed opacity is not 0
-             *   6. Element has non-zero bounding rect (actually occupies space)
-             *
-             * This matches what a real user would perceive as "visible on screen".
-             */
             function isElementVisible(el) {
-                if (!el || !el.isConnected) return false;
-
-                // offsetParent null = display:none on self or any ancestor
-                if (el.offsetParent === null && el.tagName.toLowerCase() !== 'body') return false;
-
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none')                      return false;
-                if (style.visibility === 'hidden')                 return false;
-                if (style.visibility === 'collapse')               return false;
-                if (parseFloat(style.opacity) === 0)               return false;
-
-                // Must occupy actual space in the layout
                 const rect = el.getBoundingClientRect();
-                if (rect.width === 0 && rect.height === 0)         return false;
-
-                return true;
+                if (rect.width === 0 && rect.height === 0) return false;
+                const s = window.getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' &&
+                       s.visibility !== 'collapse' && parseFloat(s.opacity) !== 0;
             }
 
-            /**
-             * isInsideHiddenContainer(el)
-             * Walks up the DOM tree and returns true if ANY ancestor is hidden.
-             * This catches elements inside:
-             *   - Collapsed dropdown menus
-             *   - Hidden modal overlays
-             *   - Off-screen navigation drawers
-             *   - Accordion panels that are closed
-             */
             function isInsideHiddenContainer(el) {
                 let node = el.parentElement;
                 while (node && node !== document.body) {
                     const s = window.getComputedStyle(node);
-                    if (
-                        s.display === 'none'       ||
-                        s.visibility === 'hidden'  ||
-                        s.visibility === 'collapse'||
-                        parseFloat(s.opacity) === 0
-                    ) return true;
+                    if (s.display === 'none' || s.visibility === 'hidden' ||
+                        s.visibility === 'collapse' || parseFloat(s.opacity) === 0)
+                        return true;
                     node = node.parentElement;
                 }
                 return false;
             }
 
-            /**
-             * isCookieBannerElement(el)
-             * Heuristically detects cookie consent banners, GDPR notices,
-             * and similar overlay widgets that pollute raw element counts.
-             * Matches common class/id patterns used by OneTrust, Cookiebot,
-             * CookiePro, and generic "cookie-banner" implementations.
-             */
             function isCookieBannerElement(el) {
                 const COOKIE_PATTERNS = [
                     /cookie/i, /consent/i, /gdpr/i, /ccpa/i,
@@ -281,111 +226,74 @@ async def capture_dom_elements(page) -> dict:
                     /cookie-banner/i, /cookie-bar/i,
                 ];
                 const haystack = [
-                    el.id || '',
-                    el.className || '',
+                    el.id || '', el.className || '',
                     el.getAttribute('data-testid') || '',
                     el.getAttribute('aria-label') || '',
                 ].join(' ');
-
                 return COOKIE_PATTERNS.some(p => p.test(haystack));
             }
 
-            /**
-             * isAccessibilityHelper(el)
-             * Excludes screen-reader-only elements (visually hidden via sr-only,
-             * visually-hidden, clip-path tricks, etc.) that are intentionally
-             * invisible to sighted users but present in the DOM for AT users.
-             */
             function isAccessibilityHelper(el) {
                 const SR_CLASSES = [
                     'sr-only', 'visually-hidden', 'screen-reader-only',
-                    'a11y-hidden', 'visually_hidden', 'offscreen',
-                    'clip', 'sr_only',
+                    'a11y-hidden', 'visually_hidden', 'offscreen', 'clip', 'sr_only',
                 ];
                 const cls = (el.className || '').toString().toLowerCase();
                 return SR_CLASSES.some(c => cls.includes(c));
             }
 
-            /**
-             * shouldIncludeElement(el)
-             * Master gate — element is included in the visible UI scan ONLY if it
-             * passes ALL visibility and exclusion checks.
-             */
             function shouldIncludeElement(el) {
-                if (!isElementVisible(el))           return false;
-                if (isInsideHiddenContainer(el))     return false;
-                if (isCookieBannerElement(el))       return false;
-                if (isAccessibilityHelper(el))       return false;
-
-                // Exclude type=hidden inputs (never visible by definition)
-                if (el.tagName.toLowerCase() === 'input' &&
-                    (el.getAttribute('type') || '').toLowerCase() === 'hidden') {
-                    return false;
-                }
-
+                if (!isElementVisible(el)) return false;
+                if (isInsideHiddenContainer(el)) return false;
+                if (isCookieBannerElement(el)) return false;
+                if (isAccessibilityHelper(el)) return false;
                 return true;
             }
 
+            // ── UI Elements ────────────────────────────────────────────────
+            const INTERACTIVE_SELECTORS = [
+                'a[href]', 'button', 'input:not([type="hidden"])',
+                'select', 'textarea', '[role="button"]', '[role="link"]',
+                '[role="menuitem"]', '[role="tab"]',
+            ];
+            const ui_elements = [];
+            const seen_els = new Set();
+            for (const sel of INTERACTIVE_SELECTORS) {
+                for (const el of document.querySelectorAll(sel)) {
+                    if (seen_els.has(el) || !shouldIncludeElement(el)) continue;
+                    seen_els.add(el);
+                    const tag  = el.tagName.toLowerCase();
+                    const role = el.getAttribute('role') || tag;
+                    const text = (el.textContent || '').trim().substring(0, 80);
+                    const aria = el.getAttribute('aria-label') || '';
+                    const href = el.getAttribute('href') || '';
+                    const id   = el.id || '';
+                    ui_elements.push({ tag, role, text, aria_label: aria, href, id });
+                }
+            }
 
-            // ── VISIBLE UI ELEMENTS ───────────────────────────────────────────
+            const visibleLinks   = [...document.querySelectorAll('a[href]')].filter(el => shouldIncludeElement(el)).length;
+            const visibleButtons = [...document.querySelectorAll('button, [role="button"]')].filter(el => shouldIncludeElement(el)).length;
+            const visibleInputs  = [...document.querySelectorAll('input:not([type="hidden"]), select, textarea')].filter(el => shouldIncludeElement(el)).length;
+            const visibleImages  = [...document.querySelectorAll('img')].filter(el => isElementVisible(el) && !isInsideHiddenContainer(el)).length;
+            const totalVisible   = ui_elements.length;
 
-            const INTERACTIVE_SELECTOR =
-                'button, a[href], input, select, textarea, [role="button"], [role="link"]';
-
-            const ui_elements = [...document.querySelectorAll(INTERACTIVE_SELECTOR)]
-                .filter(el => shouldIncludeElement(el))
-                .slice(0, 200)  // cap at 200 to match original behaviour
-                .map(el => ({
-                    tag:     el.tagName.toLowerCase(),
-                    type:    el.getAttribute('type') || null,
-                    id:      el.id || null,
-                    text:    (el.innerText || el.value || '').trim().substring(0, 80),
-                    visible: true,  // All returned elements are visible by construction
-                }));
-
-
-            // ── VISIBLE-ONLY SUMMARY COUNTS ───────────────────────────────────
-            // These replace the old unfiltered querySelectorAll().length calls.
-            // Each count reflects only what a real user sees on the page.
-
-            const visibleLinks = [...document.querySelectorAll('a[href]')]
-                .filter(el => shouldIncludeElement(el)).length;
-
-            const visibleButtons = [...document.querySelectorAll('button, [role="button"]')]
-                .filter(el => shouldIncludeElement(el)).length;
-
-            const visibleInputs = [...document.querySelectorAll(
-                'input:not([type="hidden"]), select, textarea'
-            )].filter(el => shouldIncludeElement(el)).length;
-
-            const visibleImages = [...document.querySelectorAll('img')]
-                .filter(el => isElementVisible(el) && !isInsideHiddenContainer(el)).length;
-
-            // Total unique visible interactive elements (deduplicated from ui_elements)
-            const totalVisible = ui_elements.length;
-
-
-            // ── FORMS (unchanged — already filtered for visible fields) ────────
+            // ── Forms ──────────────────────────────────────────────────────
             const forms = [...document.querySelectorAll('form')]
                 .map(f => {
                     const allInputs = [...f.querySelectorAll('input, select, textarea, button')];
-
                     const fields = allInputs
                         .filter(i => i.type !== 'hidden')
                         .map(i => {
                             const tag       = i.tagName.toLowerCase();
                             const inputType = i.getAttribute('type') ||
                                 (tag === 'select' ? 'select' : tag === 'textarea' ? 'textarea' : 'text');
-                            const labelEl   = i.id
-                                ? document.querySelector(`label[for="${i.id}"]`)
-                                : null;
+                            const labelEl   = i.id ? document.querySelector(`label[for="${i.id}"]`) : null;
                             const labelText = labelEl
                                 ? labelEl.innerText.trim().substring(0, 60)
                                 : (i.getAttribute('placeholder') || i.getAttribute('aria-label') || null);
-
                             return {
-                                tag,
-                                type:         inputType,
+                                tag, type: inputType,
                                 name:         i.getAttribute('name') || null,
                                 id:           i.id || null,
                                 required:     i.required || i.getAttribute('aria-required') === 'true',
@@ -404,26 +312,19 @@ async def capture_dom_elements(page) -> dict:
                                     : null,
                             };
                         });
-
-                    const visibleFields = fields.filter(f =>
-                        !['submit', 'button', 'reset', 'image'].includes(f.type)
-                    );
-                    const submitBtn = fields.find(f =>
-                        ['submit', 'button'].includes(f.type) || f.tag === 'button'
-                    );
-
+                    const visibleFields = fields.filter(f => !['submit','button','reset','image'].includes(f.type));
+                    const submitBtn = fields.find(f => ['submit','button'].includes(f.type) || f.tag === 'button');
                     let actionUrl = f.action || null;
                     if (actionUrl) {
                         try { actionUrl = new URL(actionUrl).href; } catch(e) {}
                     }
-
                     return {
                         id:           f.id || null,
                         action:       actionUrl,
                         method:       (f.getAttribute('method') || 'get').toUpperCase(),
                         enctype:      f.getAttribute('enctype') || null,
                         name:         f.getAttribute('name') || null,
-                        fields:       fields,
+                        fields,
                         fields_count: visibleFields.length,
                         has_submit:   !!submitBtn,
                         submit_label: submitBtn ? (submitBtn.display_name || submitBtn.placeholder || 'Submit') : null,
@@ -442,45 +343,96 @@ async def capture_dom_elements(page) -> dict:
                 })
                 .filter(f => f.fields_count > 0 || f.has_submit);
 
-            const nav_menus   = [...document.querySelectorAll('nav, [role="navigation"]')]
-                .map(n => ({ id: n.id || null, items: n.querySelectorAll('a').length }));
-            const dropdowns   = [...document.querySelectorAll('select, [role="listbox"], .dropdown')]
+            // ── NAV MENUS — enriched with actual link text + href ──────────
+            // KEY FIX: Previously only captured {id, items_count}.
+            // Now captures the actual link labels used in navigation so that
+            // flow_discovery can build "Click 'Country Master'" steps instead
+            // of "Follow link to ATIRA".
+            const nav_menus = [...document.querySelectorAll('nav, [role="navigation"]')]
+                .map(nav => {
+                    const links = [...nav.querySelectorAll('a[href]')]
+                        .filter(a => {
+                            const s = window.getComputedStyle(a);
+                            return s.display !== 'none' && s.visibility !== 'hidden';
+                        })
+                        .map(a => ({
+                            text:       (a.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 80),
+                            href:       a.href || '',
+                            aria_label: a.getAttribute('aria-label') || null,
+                            title:      a.getAttribute('title') || null,
+                            role:       a.getAttribute('role') || null,
+                        }))
+                        .filter(l => (l.text && l.text.length > 0) || l.aria_label);
+                    return {
+                        id:         nav.id || null,
+                        aria_label: nav.getAttribute('aria-label') || null,
+                        items:      links.length,
+                        links:      links.slice(0, 40),
+                    };
+                })
+                .filter(nav => nav.items > 0);
+
+            // ── SIDEBAR — enriched with link text ─────────────────────────
+            const sidebar_el = document.querySelector('aside, [role="complementary"], .sidebar, .side-nav, .sidenav, #sidebar');
+            const sidebar_links = sidebar_el
+                ? [...sidebar_el.querySelectorAll('a[href]')]
+                    .filter(a => {
+                        const s = window.getComputedStyle(a);
+                        return s.display !== 'none' && a.textContent.trim().length > 0;
+                    })
+                    .map(a => ({
+                        text: (a.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 80),
+                        href: a.href || '',
+                        aria_label: a.getAttribute('aria-label') || null,
+                    }))
+                    .filter(l => l.text.length > 0)
+                    .slice(0, 60)
+                : [];
+
+            const dropdowns  = [...document.querySelectorAll('select, [role="listbox"], .dropdown')]
                 .map(d => ({ id: d.id || null }));
-            const tabs        = [...document.querySelectorAll('[role="tab"], .tab')]
+            const tabs       = [...document.querySelectorAll('[role="tab"], .tab')]
                 .map(t => ({ text: (t.innerText || '').substring(0, 60) }));
-            const modals      = [...document.querySelectorAll('[role="dialog"], .modal, [aria-modal="true"]')]
+            const modals     = [...document.querySelectorAll('[role="dialog"], .modal, [aria-modal="true"]')]
                 .map(m => ({ id: m.id || null }));
-            const accordions  = [...document.querySelectorAll('details, [role="region"]')]
+            const accordions = [...document.querySelectorAll('details, [role="region"]')]
                 .map(a => ({ id: a.id || null }));
-            const pagination  = [...document.querySelectorAll('[aria-label*="paginat"], .pagination, [class*="paginat"]')]
+            const pagination = [...document.querySelectorAll('[aria-label*="paginat"], .pagination, [class*="paginat"]')]
                 .map(p => ({ id: p.id || null }));
 
             const breadcrumbs_el = document.querySelector(
                 '[aria-label*="breadcrumb"], .breadcrumb, nav[aria-label]'
             );
-            const sidebar_el = document.querySelector(
-                'aside, [role="complementary"], .sidebar'
-            );
+            // Capture actual breadcrumb text items too
+            const breadcrumb_items = breadcrumbs_el
+                ? [...breadcrumbs_el.querySelectorAll('a, li, span')]
+                    .map(el => (el.textContent || '').trim())
+                    .filter(t => t.length > 0 && t.length < 60)
+                    .slice(0, 8)
+                : [];
 
             return {
                 ui_elements,
                 ui_summary: {
-                    // ── CHANGED: All counts now reflect VISIBLE elements only ──
-                    images:         visibleImages,
-                    buttons:        visibleButtons,
-                    links:          visibleLinks,
-                    inputs:         visibleInputs,
-                    total_visible:  totalVisible,
+                    images:        visibleImages,
+                    buttons:       visibleButtons,
+                    links:         visibleLinks,
+                    inputs:        visibleInputs,
+                    total_visible: totalVisible,
                 },
                 forms,
                 nav_menus,
+                sidebar_links,
                 dropdowns,
                 tabs,
                 modals,
                 accordions,
                 pagination,
-                breadcrumbs: { found: !!breadcrumbs_el },
-                sidebar:     { found: !!sidebar_el },
+                breadcrumbs: {
+                    found: !!breadcrumbs_el,
+                    items: breadcrumb_items,
+                },
+                sidebar: { found: !!sidebar_el },
             };
         }""")
 
@@ -489,8 +441,6 @@ async def capture_dom_elements(page) -> dict:
     except Exception as e:
         logger.warning(f"capture_dom_elements failed: {e}")
         return {}
-
-
 
 
 # ── Crawl Anomaly Detection ────────────────────────────────────────────────────
@@ -514,32 +464,30 @@ class CrawlAnomalyDetector:
             )
 
     def should_abort(self) -> bool:
-        return self.consecutive_err >= self.threshold * 2  # abort at 2x threshold
+        return self.consecutive_err >= self.threshold * 2
 
 
+# ── Auth ────────────────────────────────────────────────────────────────────────
 
-
-import os
- 
 def _read_auth_config() -> dict | None:
     """
     Reads login config from environment variables.
     Returns None if CRAWLER_USERNAME is not set (no auth needed).
- 
-    Add to .env:
-        CRAWLER_LOGIN_URL=http://103.108.207.222:5555
+
+    .env variables:
+        CRAWLER_LOGIN_URL=http://example.com/login
         CRAWLER_USERNAME_FIELD=#txtUserName
         CRAWLER_PASSWORD_FIELD=#txtPwd
         CRAWLER_SUBMIT=button:has-text('Sign In')
-        CRAWLER_USERNAME=EMP002
-        CRAWLER_PASSWORD=EMP002
-        CRAWLER_SUCCESS_URL=/Account/Home
-        CRAWLER_SKIP_URLS=/Account/Logout,/Account/SignOut   # optional, comma-separated paths
+        CRAWLER_USERNAME=admin
+        CRAWLER_PASSWORD=password
+        CRAWLER_SUCCESS_URL=/dashboard
+        CRAWLER_SKIP_URLS=/logout,/signout
     """
     username = os.environ.get("CRAWLER_USERNAME", "").strip()
     if not username:
-        return None  # no auth configured — skip
- 
+        return None
+
     return {
         "login_url":       os.environ.get("CRAWLER_LOGIN_URL", "").strip(),
         "username_field":  os.environ.get("CRAWLER_USERNAME_FIELD", "#txtUserName").strip(),
@@ -553,25 +501,16 @@ def _read_auth_config() -> dict | None:
 
 
 def _is_skip_url(url: str, auth_cfg: dict | None) -> bool:
-    """
-    Returns True if the URL should never be crawled because it would destroy
-    the session (e.g. /Account/Logout) or is explicitly blocklisted.
-
-    Always skips paths containing 'logout' or 'signout' (case-insensitive)
-    plus any paths listed in CRAWLER_SKIP_URLS.
-    """
     path = urlparse(url).path.lower()
-    # Hard-coded destructive path guard
     if "logout" in path or "signout" in path:
         return True
-    # User-configured skip list
     if auth_cfg:
         for skip_path in auth_cfg.get("skip_urls", []):
             if skip_path.lower() in path:
                 return True
     return False
- 
- 
+
+
 async def _do_login(context, auth: dict) -> bool:
     page = await context.new_page()
     try:
@@ -581,13 +520,12 @@ async def _do_login(context, auth: dict) -> bool:
         await page.fill(auth["password_field"], auth["password"])
         await page.click(auth["submit_selector"])
         await page.wait_for_load_state("networkidle", timeout=20000)
-        await page.wait_for_timeout(2000)  # ← increase from 1500 to 2000
+        await page.wait_for_timeout(2000)
 
         current_url = page.url
         success_url = auth.get("success_url", "")
 
         if success_url and success_url in current_url:
-            # ── Save cookies back to context so all future pages use them ──
             cookies = await context.cookies()
             logger.info(f"[auth] ✓ Login succeeded — {len(cookies)} cookies captured")
             return True
@@ -603,7 +541,9 @@ async def _do_login(context, auth: dict) -> bool:
         logger.error(f"[auth] Login error: {e}", exc_info=True)
         return False
     finally:
-        await page.close()  # close page but NOT context — cookies stay alive
+        await page.close()
+
+
 # ── Main Crawl Loop ────────────────────────────────────────────────────────────
 
 async def crawl_site(
@@ -616,9 +556,10 @@ async def crawl_site(
     active_filters: list | None = None,
     update_fn=None,
 ):
-    queue        = [normalize_url(base_url)]
-    eta_tracker  = ETATracker()
-    anomaly_det  = CrawlAnomalyDetector()
+    queue       = [normalize_url(base_url)]
+    eta_tracker = ETATracker()
+    anomaly_det = CrawlAnomalyDetector()
+    auth        = _read_auth_config()
 
     while queue:
         if max_pages is not None and len(page_data) >= int(max_pages):
@@ -633,100 +574,95 @@ async def crawl_site(
             continue
         if not same_domain(base_url, current_url):
             continue
-        # Skip URLs that would destroy the session (logout, signout, etc.)
-        _auth_skip_cfg = _read_auth_config()
-        if _is_skip_url(current_url, _auth_skip_cfg):
-            logger.info(f"[auth] Skipping session-destructive URL: {current_url}")
-            visited.add(current_url)  # mark visited so it's never re-queued
+        if _is_skip_url(current_url, auth):
+            logger.info(f"[skip] {current_url}")
             continue
 
         visited.add(current_url)
-        page_start       = time.time()
-        discovered_count = len(visited) + len(queue)
-
-        logger.info(f"[{len(page_data)+1}/{max_pages or '?'}] Scanning: {current_url}")
+        t_start = time.time()
 
         page = await context.new_page()
-        try:
-            # ── Response listeners — classify ALL network responses ──
-            failed_assets        = []
-            third_party_failures = []
-            js_errors            = []
-            redirect_count       = [0]
 
-            def handle_response(response):
-                url  = response.url
-                stat = response.status
-                if 300 <= stat < 400:
-                    redirect_count[0] += 1
-                if stat >= 400:
-                    if is_asset_url(url):
-                        failed_assets.append({"url": url, "status": stat})
-                    elif is_third_party(base_url, url):
-                        third_party_failures.append({"url": url, "status": stat})
+        # ── JS error collection — structured with stack traces ────────────────
+        js_errors: list[dict] = []
 
-            def handle_request_failed(req):
-                url = req.url
-                if is_asset_url(url):
-                    failed_assets.append({"url": url, "status": None, "error": req.failure or ""})
-                elif is_third_party(base_url, url):
-                    third_party_failures.append({"url": url, "status": None})
-                # internal non-asset failures are caught by classify_links
+        def _capture_js_error(err):
+            """Capture pageerror with message and stack."""
+            js_errors.append({
+                "message": str(err),
+                "stack":   getattr(err, "stack", None) or str(err),
+                "source":  "pageerror",
+            })
 
-            page.on("response",      handle_response)
-            page.on("requestfailed", handle_request_failed)
-            page.on("pageerror",     lambda err: js_errors.append(str(err)))
-
-            # ── Navigate with tiered timeout fallback ──
-            response = None
-            for wait_until, timeout in [("domcontentloaded", 30000), ("load", 30000), ("commit", 15000)]:
+        def _capture_console_error(msg):
+            """Capture console.error() calls."""
+            if msg.type == "error":
+                location = None
                 try:
-                    response = await page.goto(current_url, wait_until=wait_until, timeout=timeout)
-                    break
-                except Exception as nav_err:
-                    logger.debug(f"nav fallback [{wait_until}] for {current_url}: {nav_err}")
-                    response = None
+                    loc = msg.location
+                    if loc:
+                        location = f"{loc.get('url','?')}:{loc.get('lineNumber','?')}"
+                except Exception:
+                    pass
+                js_errors.append({
+                    "message":  msg.text,
+                    "stack":    None,
+                    "source":   "console.error",
+                    "location": location,
+                })
 
-            if response is None:
-                logger.warning(f"All navigation attempts failed for {current_url}")
-                anomaly_det.record_failure(current_url, "navigation_failed")
-                continue
+        page.on("pageerror", _capture_js_error)
+        page.on("console", _capture_console_error)
 
-            await page.wait_for_timeout(1500)  # reduced from 2000ms
+        # ── Failed asset tracking ──────────────────────────────────────────────
+        failed_assets_live:       list[dict] = []
+        third_party_failures_live: list[dict] = []
 
-            # ── SESSION GUARD: detect if ERP redirected us to login page ──────
-            _auth_cfg = _read_auth_config()
-            if _auth_cfg:
-                _final_url   = page.url
-                _login_url   = _auth_cfg.get("login_url", "").rstrip("/")
-                _success_url = _auth_cfg.get("success_url", "")
-                _redirected_to_login = (
-                    _final_url.rstrip("/") == _login_url or
-                    (_success_url and _success_url not in _final_url and
-                     _login_url and urlparse(_final_url).netloc == urlparse(_login_url).netloc and
-                     "login" in _final_url.lower())
-                )
-                if _redirected_to_login and _final_url.rstrip("/") != current_url.rstrip("/"):
-                    logger.warning(f"[auth] Session expired on {current_url} — re-authenticating...")
-                    await page.close()
-                    _relogin_ok = await _do_login(context, _auth_cfg)
-                    if _relogin_ok:
-                        logger.info(f"[auth] Re-authenticated — re-queuing {current_url}")
-                        visited.discard(current_url)
-                        queue.insert(0, current_url)
-                    else:
-                        logger.error(f"[auth] Re-auth failed — skipping {current_url}")
-                    continue
-            # ── END SESSION GUARD ─────────────────────────────────────────────
+        def _on_response_failed(req):
+            url = req.url
+            if is_asset_url(url):
+                if is_third_party(base_url, url):
+                    third_party_failures_live.append({"url": url, "resource_type": req.resource_type})
+                else:
+                    failed_assets_live.append({"url": url, "resource_type": req.resource_type})
 
-            status = response.status if response else 0
-            title  = ""
+        page.on("requestfailed", _on_response_failed)
+
+        redirect_count = [0]
+
+        try:
+            response = None
+            load_ms  = None
+
             try:
-                title = await page.title()
-            except Exception:
-                pass
+                response = await page.goto(
+                    current_url,
+                    wait_until="domcontentloaded",
+                    timeout=30000,
+                )
+                load_ms = (time.time() - t_start) * 1000
+            except Exception as nav_err:
+                logger.warning(f"domcontentloaded failed for {current_url}: {nav_err}")
+                try:
+                    response = await page.goto(current_url, wait_until="load", timeout=20000)
+                    load_ms = (time.time() - t_start) * 1000
+                except Exception as nav_err2:
+                    logger.warning(f"load failed for {current_url}: {nav_err2}")
+                    try:
+                        response = await page.goto(current_url, wait_until="commit", timeout=15000)
+                        load_ms = (time.time() - t_start) * 1000
+                    except Exception as nav_err3:
+                        logger.error(f"All navigation strategies failed for {current_url}: {nav_err3}")
+                        anomaly_det.record_failure(current_url, str(nav_err3))
+                        continue
 
-            # ── Engine execution gated by filters ──
+            status = response.status if response else None
+
+            # Track redirects
+            if response and response.url != current_url:
+                redirect_count[0] += 1
+
+            # ── Engine execution gated by filters ──────────────────────────
             dom_data     = {}
             perf_raw     = {}
             a11y_raw     = {}
@@ -758,66 +694,60 @@ async def crawl_site(
                 except Exception as e:
                     logger.warning(f"Security capture failed {current_url}: {e}")
 
-            # ── Screenshot ──
+            # ── Screenshot ─────────────────────────────────────────────────
             screenshot_path = f"screenshots/run_{run_id}_{int(time.time()*1000)}.png"
             try:
                 await page.screenshot(path=screenshot_path, full_page=True, timeout=10000)
             except Exception:
                 screenshot_path = None
 
-            # ── REFACTORED: Classify broken links ──
-            # NOTE: classify_links is ALWAYS called so internal_links are discovered
-            # for the crawl queue regardless of active filters.
-            # Broken-link *scoring* data is only used when "functional" filter is active.
-            link_data = {"broken_navigation_links": [], "failed_assets": [], "third_party_failures": [], "internal_links": []}
-            try:
-                link_data = await classify_links(context, page, base_url)
-                # Merge asset/third-party failures from response listener into link_data
-                link_data["failed_assets"]        += failed_assets
-                link_data["third_party_failures"] += third_party_failures
-            except Exception as e:
-                logger.warning(f"Link classification failed {current_url}: {e}")
-                link_data["failed_assets"]        = failed_assets
-                link_data["third_party_failures"] = third_party_failures
+            # ── Link classification ────────────────────────────────────────
+            link_data = await classify_links(page, base_url, context)
+            link_data["failed_assets"]        = failed_assets_live
+            link_data["third_party_failures"] = third_party_failures_live
+            internal_links                    = link_data["internal_links"]
 
-            # Gate broken-link scoring data behind the functional filter
-            if not (_filter_active(active_filters, "functional") or not active_filters):
-                link_data["broken_navigation_links"] = []
+            # ── Scoring ────────────────────────────────────────────────────
+            perf_score_data  = compute_performance_score(perf_raw)  if perf_raw  else {}
+            a11y_score_data  = compute_accessibility_score(a11y_raw) if a11y_raw  else {}
+            sec_score_data   = compute_security_score(security_raw)  if security_raw else {}
 
-            internal_links = link_data["internal_links"]
+            analyzed_forms   = analyze_all_forms(dom_data.get("forms", []))
 
-            # Enqueue unvisited internal links
-            _auth_enqueue_cfg = _read_auth_config()
-            for link in internal_links:
-                if link not in visited and link not in queue and not _is_skip_url(link, _auth_enqueue_cfg):
-                    queue.append(link)
+            func_input = {
+                "broken_navigation_links": link_data["broken_navigation_links"],
+                "js_errors":               js_errors,
+                "status":                  status,
+            }
+            func_score_data = compute_functional_score(func_input)
 
-            # ── Compute scores ──
-            perf_score_data = compute_performance_score(perf_raw)  if perf_raw  else {"score": None, "grade": None, "slow_indicators": []}
-            a11y_score_data = compute_accessibility_score(a11y_raw) if a11y_raw  else {"score": None, "risk_level": None, "wcag_violations": []}
-            sec_score_data  = compute_security_score(security_raw)  if security_raw else {"score": None, "risk_level": None}
-            analyzed_forms  = analyze_all_forms(dom_data.get("forms") or []) if dom_data else []
+            ui_form_input = {
+                "forms":       analyzed_forms,
+                "ui_elements": dom_data.get("ui_elements", []),
+                "ui_summary":  dom_data.get("ui_summary", {}),
+            }
+            ui_form_score_data = compute_ui_form_score(ui_form_input)
 
-            load_ms = None
-            try:
-                load_ms = (perf_raw or {}).get("load_event_end_ms", 0) / 1000 if perf_raw else None
-            except Exception:
-                pass
+            page_title = await page.title()
 
-            page_object = {
-                "url":        current_url,
-                "title":      title,
-                "timestamp":  datetime.now(UTC).isoformat(),
-                "status":     status,
-                "result":     "pass" if status == 200 else "fail",
+            page_obj = {
+                "url":   current_url,
+                "title": page_title,
+                "status": status,
+                "result": "pass" if (status or 200) < 400 else "fail",
 
-                # DOM & UI
+                # UI / DOM
                 "ui_elements": dom_data.get("ui_elements", []),
                 "ui_summary":  dom_data.get("ui_summary", {}),
                 "forms":       analyzed_forms,
                 "dropdowns":   dom_data.get("dropdowns", []),
                 "pagination":  dom_data.get("pagination", []),
-                "nav_menus":   dom_data.get("nav_menus", []),
+
+                # ── ENRICHED: nav_menus now has full link objects ──────────
+                "nav_menus":    dom_data.get("nav_menus", []),
+                # ── NEW: sidebar_links for flow discovery ──────────────────
+                "sidebar_links": dom_data.get("sidebar_links", []),
+
                 "tabs":        dom_data.get("tabs", []),
                 "modals":      dom_data.get("modals", []),
                 "accordions":  dom_data.get("accordions", []),
@@ -848,97 +778,89 @@ async def crawl_site(
                 "security_risk":  sec_score_data.get("risk_level"),
                 "is_https":       (security_raw or {}).get("is_https"),
 
-                # REFACTORED Functional — broken links now separated
+                # Functional — broken links separated
                 "broken_navigation_links": link_data["broken_navigation_links"],
                 "failed_assets":           link_data["failed_assets"],
                 "third_party_failures":    link_data["third_party_failures"],
-                # Legacy alias kept for DB compat — points to nav links only
-                "broken_links":            link_data["broken_navigation_links"],
+                "broken_links":            link_data["broken_navigation_links"],  # legacy alias
+
+                # ── ENRICHED: JS errors now structured dicts ──────────────
                 "js_errors":               js_errors,
-                "failed_requests":         [],  # no longer used for scoring
+
+                "failed_requests":         [],
                 "redirect_chain_length":   redirect_count[0],
 
                 # Screenshot
                 "screenshot": screenshot_path,
             }
 
-            # ── Component scores ──
-            if _filter_active(active_filters, "functional"):
-                func_score_data = compute_functional_score(page_object)
-                page_object["functional_score"] = func_score_data.get("score")
-            else:
-                page_object["functional_score"] = None
+            # ── Compute health score ───────────────────────────────────────
+            scores_for_health = {
+                "performance_score":   perf_score_data.get("score"),
+                "accessibility_score": a11y_score_data.get("score"),
+                "security_score":      sec_score_data.get("score"),
+                "functional_score":    func_score_data.get("score"),
+                "ui_form_score":       ui_form_score_data.get("score"),
+            }
+            health_data = compute_page_health_score(scores_for_health, active_filters)
+            page_obj["health_score"]     = health_data.get("score")
+            page_obj["health_breakdown"] = health_data.get("breakdown", {})
+            page_obj["risk_category"]    = health_data.get("risk_category")
+            page_obj["functional_score"] = func_score_data.get("score")
+            page_obj["ui_form_score"]    = ui_form_score_data.get("score")
 
-            if _filter_active(active_filters, "form_validation") or \
-               _filter_active(active_filters, "ui_elements"):
-                ui_form_score_data = compute_ui_form_score(page_object)
-                page_object["ui_form_score"] = ui_form_score_data.get("score")
-            else:
-                page_object["ui_form_score"] = None
+            # ── AI / confidence enrichment ─────────────────────────────────
+            enrich_page_with_ai_fields(page_obj, active_filters)
 
-            # Composite health
-            health_data = compute_page_health_score(
-                performance_score=page_object["performance_score"],
-                accessibility_score=page_object["accessibility_score"],
-                security_score=page_object["security_score"],
-                functional_score=page_object["functional_score"],
-                ui_form_score=page_object["ui_form_score"],
-            )
-            page_object["health_score"]     = health_data.get("health_score")
-            page_object["risk_category"]    = health_data.get("risk_category")
-            page_object["health_breakdown"] = health_data
-
-            enrich_page_with_ai_fields(page_object, active_filters)
-            page_data.append(page_object)
+            page_data.append(page_obj)
             anomaly_det.record_success()
 
-            # ETA update
-            elapsed   = time.time() - page_start
-            eta_tracker.record_page(elapsed)
-            remaining = len(queue)
-            if max_pages:
-                remaining = max(0, max_pages - len(page_data))
-            avg_ms = round((eta_tracker.avg_time() or 0) * 1000, 1)
-            eta_s  = eta_tracker.eta_seconds(remaining)
+            # ── Queue new URLs discovered ──────────────────────────────────
+            for link in internal_links:
+                norm = normalize_url(link)
+                if norm not in visited and norm not in queue:
+                    if not _is_skip_url(norm, auth):
+                        queue.append(norm)
+
+            elapsed_ms = (time.time() - t_start) * 1000
+            eta_tracker.record(elapsed_ms)
 
             if update_fn:
                 try:
                     update_fn(
                         scanned=len(page_data),
-                        total=max_pages or (len(page_data) + len(queue)),
-                        discovered=discovered_count,
-                        avg_ms=avg_ms,
-                        eta_seconds=eta_s,
+                        total=max(len(page_data) + len(queue), len(page_data)),
+                        discovered=len(visited) + len(queue),
+                        avg_ms=eta_tracker.avg_ms(),
+                        eta_seconds=eta_tracker.eta(len(queue)),
                     )
                 except Exception:
                     pass
 
             logger.info(
-                f"  ✓ status={status} health={page_object.get('health_score')} "
-                f"nav_broken={len(link_data['broken_navigation_links'])} "
-                f"asset_fail={len(link_data['failed_assets'])} "
-                f"3p_fail={len(link_data['third_party_failures'])} "
-                f"js_err={len(js_errors)} elapsed={round(elapsed,2)}s"
+                f"[{len(page_data)}] {current_url} → {status} "
+                f"| health={page_obj.get('health_score')} "
+                f"| js_errors={len(js_errors)} "
+                f"| {elapsed_ms:.0f}ms"
             )
 
+            # Rate limiting
+            if CRAWL_DELAY_MS > 0:
+                await asyncio.sleep(CRAWL_DELAY_MS / 1000.0)
+
         except Exception as e:
-            logger.error(f"Error crawling {current_url}: {e}", exc_info=True)
-            anomaly_det.record_failure(current_url, str(e)[:120])
+            logger.error(f"Page processing error for {current_url}: {e}", exc_info=True)
+            anomaly_det.record_failure(current_url, str(e))
         finally:
-            # CRITICAL: always close page to prevent memory leak
             try:
                 await page.close()
             except Exception:
                 pass
 
-        # Rate-limit protection
-        if CRAWL_DELAY_MS > 0:
-            await asyncio.sleep(CRAWL_DELAY_MS / 1000.0)
-
 
 # ── Report Builder ─────────────────────────────────────────────────────────────
 
-async def build_reports(run_id: int, page_data: list, active_filters: list | None):
+async def build_reports(run_id: int, page_data: list, active_filters: list | None) -> dict:
     rows = []
     for pg in page_data:
         ui_s = pg.get("ui_summary") or {}
@@ -947,25 +869,19 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
             "Title":                pg.get("title"),
             "Status":               pg.get("status"),
             "Result":               pg.get("result"),
-            "Load Time (s)":        pg.get("load_time"),
-            "FCP (ms)":             pg.get("fcp_ms"),
-            "LCP (ms)":             pg.get("lcp_ms"),
-            "TTFB (ms)":            pg.get("ttfb_ms"),
-            "Performance Score":    pg.get("performance_score"),
-            "Accessibility Score":  pg.get("accessibility_score"),
-            "Accessibility Issues": pg.get("accessibility_issues"),
-            "Accessibility Risk":   pg.get("accessibility_risk"),
-            "Security Score":       pg.get("security_score"),
-            "Security Risk":        pg.get("security_risk"),
-            "Is HTTPS":             pg.get("is_https"),
-            "Functional Score":     pg.get("functional_score"),
-            "UI/Form Score":        pg.get("ui_form_score"),
             "Health Score":         pg.get("health_score"),
             "Risk Category":        pg.get("risk_category"),
             "Confidence Score":     pg.get("confidence_score"),
-            "Failure Pattern ID":   pg.get("failure_pattern_id"),
-            "Root Cause Tag":       pg.get("root_cause_tag"),
-            # REFACTORED: separate broken link columns
+            "Performance Score":    pg.get("performance_score"),
+            "Accessibility Score":  pg.get("accessibility_score"),
+            "Security Score":       pg.get("security_score"),
+            "Functional Score":     pg.get("functional_score"),
+            "UI/Form Score":        pg.get("ui_form_score"),
+            "Load Time (ms)":       pg.get("load_time"),
+            "FCP (ms)":             pg.get("fcp_ms"),
+            "LCP (ms)":             pg.get("lcp_ms"),
+            "TTFB (ms)":            pg.get("ttfb_ms"),
+            "Accessibility Issues": pg.get("accessibility_issues"),
             "Broken Nav Links":     len(pg.get("broken_navigation_links") or []),
             "Failed Assets":        len(pg.get("failed_assets") or []),
             "3rd Party Failures":   len(pg.get("third_party_failures") or []),
@@ -1032,13 +948,12 @@ async def main(
 ):
     visited   = set()
     page_data = []
- 
-    # Always resolve to int or None — never pass a raw string into crawl_site
+
     try:
         max_pages = int(page_limit) if page_limit not in (None, "", "None", "null") else None
     except (TypeError, ValueError):
         max_pages = None
- 
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -1046,24 +961,20 @@ async def main(
             ignore_https_errors=True,
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
- 
-        # ── AUTH PATCH START ──────────────────────────────────────────────────
-        # ── AUTH PATCH START ──────────────────────────────────────────────────
+
         auth = _read_auth_config()
         if auth:
             login_ok = await _do_login(context, auth)
             if login_ok:
                 logger.info("[auth] Session established — crawling as authenticated user")
-                # Override start URL to post-login page so crawler skips login page
                 success_url = auth.get("success_url", "").strip()
                 if success_url:
-                    from urllib.parse import urlparse
                     parsed = urlparse(start_url)
                     start_url = f"{parsed.scheme}://{parsed.netloc}{success_url}"
                     logger.info(f"[auth] Crawl start redirected to: {start_url}")
             else:
                 logger.warning("[auth] Login failed — crawling as unauthenticated user")
-        # ── AUTH PATCH END ────────────────────────────────────────────────────
+
         try:
             await crawl_site(
                 context=context,
@@ -1078,7 +989,7 @@ async def main(
         finally:
             await context.close()
             await browser.close()
- 
+
     return await build_reports(run_id, page_data, active_filters)
 
 
