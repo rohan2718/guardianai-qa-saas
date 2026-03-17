@@ -155,24 +155,76 @@ def _split_selectors(selector: str) -> list[str]:
 
 # ── Fill Helper with 4-Strategy Fallback ──────────────────────────────────────
 
-async def _try_fill_selector(page, selector: str, value: str, timeout_ms: int) -> bool:
+async def _interact_with_locator(loc, value: str, timeout_ms: int) -> bool:
+    """Applies value based on resolved control type without throwing."""
     try:
-        loc = page.locator(selector).first
-        if await loc.count() == 0:
-            return False
         await loc.wait_for(state="visible", timeout=min(timeout_ms, 5000))
-        # Checkboxes and radios must be checked/clicked, not filled
-        input_type = await loc.get_attribute("type") or ""
-        if input_type.lower() in ("checkbox", "radio"):
-            if value.lower() in ("check", "true", "1", "yes", "on"):
+        tag = ((await loc.evaluate("el => el.tagName")) or "").lower()
+        input_type = ((await loc.get_attribute("type")) or "").lower()
+        role = ((await loc.get_attribute("role")) or "").lower()
+
+        if tag == "select":
+            await loc.select_option(label=value, timeout=timeout_ms)
+            return True
+
+        if input_type in ("checkbox", "radio"):
+            should_check = value.lower() in ("check", "true", "1", "yes", "on", "selected")
+            if should_check:
                 await loc.check(timeout=timeout_ms)
-            else:
+            elif input_type == "checkbox":
                 await loc.uncheck(timeout=timeout_ms)
-        else:
+            else:
+                await loc.check(timeout=timeout_ms)
+            return True
+
+        if tag in ("input", "textarea"):
             await loc.fill(value, timeout=timeout_ms)
-        return True
+            return True
+
+        # Custom dropdown / combobox style controls
+        if tag == "div" or role in ("combobox", "listbox", "menu"):
+            await loc.click(timeout=timeout_ms)
+            option_candidates = [
+                f'text="{value}"',
+                f'[role="option"]:has-text("{value}")',
+                f'li:has-text("{value}")',
+                f'div:has-text("{value}")',
+            ]
+            for opt_sel in option_candidates:
+                try:
+                    opt = loc.page.locator(opt_sel).first
+                    if await opt.count() > 0:
+                        await opt.wait_for(state="visible", timeout=min(timeout_ms, 3000))
+                        await opt.click(timeout=timeout_ms)
+                        return True
+                except Exception:
+                    continue
+        return False
     except Exception:
         return False
+
+
+async def _try_fill_selector(page, selector: str, value: str, timeout_ms: int) -> bool:
+    try:
+        if not selector:
+            return False
+        cleaned = selector.strip()
+        loc = page.locator(f"xpath={cleaned}").first if cleaned.startswith("/") else page.locator(cleaned).first
+        if await loc.count() == 0:
+            return False
+        return await _interact_with_locator(loc, value, timeout_ms)
+    except Exception:
+        return False
+
+
+def _label_hint_from_description(description: str) -> str:
+    if not description:
+        return ""
+    base = description.split(":")[0]
+    for prefix in ("Enter ", "Select ", "Choose ", "Set ", "Click "):
+        if base.startswith(prefix):
+            base = base[len(prefix):]
+    return base.strip(" '")
 
 
 async def _fill_field(
@@ -183,57 +235,52 @@ async def _fill_field(
     timeout_ms: int,
 ) -> tuple[bool, str]:
     """
-    Tries to fill a form field using 4 progressive strategies.
+    Tries robust selector chain in order: label, placeholder, role, CSS, XPath.
     Returns (success: bool, method_used: str).
     """
-    # ── Strategy 1: try each CSS selector part individually ──────────────────
-    for part in _split_selectors(selector) if selector else []:
-        if await _try_fill_selector(page, part, value, timeout_ms):
-            return True, f"css:{part[:60]}"
+    label_hint = _label_hint_from_description(description)
 
-    # ── Extract label hint from description ───────────────────────────────────
-    # e.g. "Enter Email Address: 'foo'" → "Email Address"
-    label_hint = ""
-    if description:
-        label_hint = description.split(":")[0].replace("Enter ", "").strip()
-
-    # ── Strategy 2: get_by_label ─────────────────────────────────────────────
+    # 1) get_by_label
     if label_hint:
         try:
             loc = page.get_by_label(label_hint, exact=False).first
-            if await loc.count() > 0:
-                await loc.wait_for(state="visible", timeout=min(timeout_ms, 5000))
-                await loc.fill(value, timeout=timeout_ms)
+            if await loc.count() > 0 and await _interact_with_locator(loc, value, timeout_ms):
                 return True, f"label:{label_hint}"
         except Exception:
             pass
 
-    # ── Strategy 3: get_by_placeholder ───────────────────────────────────────
+    # 2) get_by_placeholder
     if label_hint:
         try:
             loc = page.get_by_placeholder(label_hint, exact=False).first
-            if await loc.count() > 0:
-                await loc.wait_for(state="visible", timeout=min(timeout_ms, 5000))
-                await loc.fill(value, timeout=timeout_ms)
+            if await loc.count() > 0 and await _interact_with_locator(loc, value, timeout_ms):
                 return True, f"placeholder:{label_hint}"
         except Exception:
             pass
 
-    # ── Strategy 4: input type hint (email/password/tel/number/date) ─────────
-    type_hints = {
-        "email":    'input[type="email"]',
-        "password": 'input[type="password"]',
-        "phone":    'input[type="tel"]',
-        "tel":      'input[type="tel"]',
-        "number":   'input[type="number"]',
-        "date":     'input[type="date"]',
-    }
-    desc_lower = (description or "").lower()
-    for hint, type_sel in type_hints.items():
-        if hint in desc_lower:
-            if await _try_fill_selector(page, type_sel, value, timeout_ms):
-                return True, f"type:{hint}"
-            break
+    # 3) get_by_role (textbox/combobox/spinbutton)
+    if label_hint:
+        for role in ("textbox", "combobox", "spinbutton", "searchbox"):
+            try:
+                loc = page.get_by_role(role, name=label_hint).first
+                if await loc.count() > 0 and await _interact_with_locator(loc, value, timeout_ms):
+                    return True, f"role:{role}:{label_hint}"
+            except Exception:
+                continue
+
+    # 4) CSS selectors from target
+    for part in _split_selectors(selector) if selector else []:
+        if part.strip().startswith("/"):
+            continue
+        if await _try_fill_selector(page, part, value, timeout_ms):
+            return True, f"css:{part[:60]}"
+
+    # 5) XPath fallback from target
+    for part in _split_selectors(selector) if selector else []:
+        if not part.strip().startswith("/"):
+            continue
+        if await _try_fill_selector(page, part, value, timeout_ms):
+            return True, f"xpath:{part[:60]}"
 
     return False, "all_strategies_failed"
 
@@ -324,7 +371,7 @@ async def _execute_fill(page, step: dict, run_id: int, tc_id: str) -> StepResult
         actual_outcome=f"Could not fill field — all 4 strategies failed (selector: {selector!r})",
         error_message=(
             f"Field not found or not interactable. "
-            f"Tried CSS selectors, get_by_label, get_by_placeholder, and type-hint fallback."
+            f"Tried get_by_label, get_by_placeholder, get_by_role, CSS selectors, and XPath fallback."
         ),
         screenshot_path=sshot, duration_ms=duration,
     )
@@ -354,11 +401,18 @@ async def _execute_click_or_submit(page, step: dict, run_id: int, tc_id: str) ->
 
     if is_submit:
         candidates += [
-            'button[type="submit"]', 'input[type="submit"]',
-            'button:has-text("Submit")', 'button:has-text("Send")',
-            'button:has-text("Sign In")', 'button:has-text("Login")',
-            'button:has-text("Register")', 'button:has-text("Continue")',
-            'button:has-text("Next")', 'form button',
+            '[role="button"][type="submit"]',
+            'button[type="submit"]',
+            'input[type="submit"]',
+            'button:has-text("Submit")',
+            'button:has-text("Send")',
+            'button:has-text("Sign In")',
+            'button:has-text("Login")',
+            'button:has-text("Register")',
+            'button:has-text("Continue")',
+            'button:has-text("Next")',
+            '[role="button"]:has-text("Submit")',
+            'form button',
         ]
     elif not selector:
         candidates += ['a[href]', 'button', '[role="button"]']
@@ -368,11 +422,26 @@ async def _execute_click_or_submit(page, step: dict, run_id: int, tc_id: str) ->
     candidates = [c for c in candidates if not (c in seen or seen.add(c))]
 
     clicked = False
+
+    # Submit-first semantic role fallback
+    if is_submit:
+        for button_name in ("Submit", "Send", "Sign In", "Login", "Register", "Continue", "Next"):
+            try:
+                role_btn = page.get_by_role("button", name=button_name).first
+                if await role_btn.count() > 0:
+                    await role_btn.scroll_into_view_if_needed(timeout=3000)
+                    await role_btn.click(timeout=STEP_TIMEOUT_MS)
+                    clicked = True
+                    break
+            except Exception:
+                continue
+
     for sel in candidates:
-        if not sel:
+        if clicked or not sel:
             continue
         try:
-            loc = page.locator(sel).first
+            cleaned = sel.strip()
+            loc = page.locator(f"xpath={cleaned}").first if cleaned.startswith("/") else page.locator(cleaned).first
             if await loc.count() == 0:
                 continue
             try:
@@ -384,6 +453,15 @@ async def _execute_click_or_submit(page, step: dict, run_id: int, tc_id: str) ->
             break
         except Exception:
             continue
+
+    if is_submit and not clicked:
+        try:
+            text_btn = page.get_by_text("Submit", exact=False).first
+            if await text_btn.count() > 0:
+                await text_btn.click(timeout=STEP_TIMEOUT_MS)
+                clicked = True
+        except Exception:
+            pass
 
     if not clicked:
         # ── Fallback: direct URL navigation ──────────────────────────────────
@@ -540,11 +618,10 @@ async def run_test_case(context, test_case: dict, run_id: int) -> TestCaseResult
                 )
 
             step_results.append(sr)
-            if sr.status in ("fail", "error"):
+            if sr.status in ("fail", "error") and result.failure_step is None:
                 result.failure_step    = step["step_number"]
                 result.failure_reason  = sr.error_message or sr.actual_outcome
                 result.screenshot_path = sr.screenshot_path
-                break
 
     except asyncio.TimeoutError:
         result.status       = "timeout"
