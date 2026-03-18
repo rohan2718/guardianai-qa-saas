@@ -3627,14 +3627,30 @@
          </div>`
                     : "";
 
+                  // Format text: escape HTML then convert newlines to <br>
+                  const formatText = (t) => esc(t || "—").replace(/\n/g, "<br>");
+
+                  // Screenshot from the affected page
+                  const screenshotHtml = bug.screenshot_path
+                    ? `<div class="qa-detail-section full-width">
+                         <h5><i class="fa-solid fa-camera"></i> Page Screenshot</h5>
+                         <img src="/${bug.screenshot_path}"
+                              style="width:100%;border-radius:8px;border:1px solid #e2e8f0;
+                                     cursor:pointer;max-height:300px;object-fit:cover;object-position:top"
+                              onclick="window.open('/${bug.screenshot_path}','_blank')"
+                              onerror="this.parentElement.style.display='none'"
+                         />
+                       </div>`
+                    : "";
+
                   body.innerHTML = `
       <div class="qa-detail-section">
         <h5><i class="fa-solid fa-circle-info"></i> Description</h5>
-        <p>${esc(bug.description || "—")}</p>
+        <p>${formatText(bug.description)}</p>
       </div>
       <div class="qa-detail-section">
         <h5><i class="fa-solid fa-bolt"></i> Impact</h5>
-        <p>${esc(bug.impact || "—")}</p>
+        <p>${formatText(bug.impact)}</p>
       </div>
       <div class="qa-detail-section">
         <h5><i class="fa-solid fa-list-ol"></i> Steps to Reproduce</h5>
@@ -3642,19 +3658,20 @@
       </div>
       <div class="qa-detail-section">
         <h5><i class="fa-solid fa-screwdriver-wrench"></i> Suggested Fix</h5>
-        <p>${esc(bug.suggested_fix || "—")}</p>
+        <p>${formatText(bug.suggested_fix)}</p>
       </div>
       <div class="qa-detail-section full-width">
         <h5><i class="fa-solid fa-arrows-left-right"></i> Expected vs Actual</h5>
         <div class="qa-compare-row">
           <div class="qa-compare-box expected">
-            <strong>✓ Expected</strong>${esc(bug.expected_result || "—")}
+            <strong>✓ Expected</strong>${formatText(bug.expected_result)}
           </div>
           <div class="qa-compare-box actual">
-            <strong>✗ Actual</strong>${esc(bug.actual_result || "—")}
+            <strong>✗ Actual</strong>${formatText(bug.actual_result)}
           </div>
         </div>
       </div>
+      ${screenshotHtml}
       ${snippetHtml}
     `;
 
@@ -5039,9 +5056,12 @@
         const rootUrlVal = document
           .getElementById("modalContent")
           .querySelector(`#root-url-${index}`).value;
-        const rawLinksVal = document
+        const graphEl = document
           .getElementById("modalContent")
-          .querySelector(`#graph-data-${index}`).value;
+          .querySelector(`#graph-data-${index}`);
+        const rawLinksVal = graphEl
+          ? (graphEl.value || graphEl.textContent || "[]").trim()
+          : "[]";
         let links = [];
         try {
           links = JSON.parse(rawLinksVal);

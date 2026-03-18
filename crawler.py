@@ -429,7 +429,14 @@ async def capture_dom_elements(page) -> dict:
             // Now captures the actual link labels used in navigation so that
             // flow_discovery can build "Click 'Country Master'" steps instead
             // of "Follow link to ATIRA".
-            const nav_menus = [...document.querySelectorAll('nav, [role="navigation"]')]
+            const navSources = [
+                ...document.querySelectorAll('nav, [role="navigation"]'),
+                ...document.querySelectorAll('[class*="sidebar"], [class*="side-nav"], [class*="sidenav"]'),
+                ...document.querySelectorAll('.app-aside-wrapper, .menu-wrapper, .left-menu, .main-menu'),
+            ];
+            // Deduplicate elements
+            const navUnique = [...new Set(navSources)];
+            const nav_menus = navUnique
                 .map(nav => {
                     const links = [...nav.querySelectorAll('a[href]')]
                         .filter(a => {
@@ -437,7 +444,7 @@ async def capture_dom_elements(page) -> dict:
                             return s.display !== 'none' && s.visibility !== 'hidden';
                         })
                         .map(a => ({
-                            text:       (a.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 80),
+                            text:       (a.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 80),
                             href:       a.href || '',
                             aria_label: a.getAttribute('aria-label') || null,
                             title:      a.getAttribute('title') || null,
@@ -454,21 +461,29 @@ async def capture_dom_elements(page) -> dict:
                 .filter(nav => nav.items > 0);
 
             // ── SIDEBAR — enriched with link text ─────────────────────────
-            const sidebar_el = document.querySelector('aside, [role="complementary"], .sidebar, .side-nav, .sidenav, #sidebar');
-            const sidebar_links = sidebar_el
-                ? [...sidebar_el.querySelectorAll('a[href]')]
+            const sidebar_el = document.querySelector('aside, [role="complementary"], .sidebar, .side-nav, .sidenav, #sidebar, [class*="sidebar"], .app-aside-wrapper, .menu-wrapper');
+            // Collect sidebar links from sidebar element AND .menu-item divs
+            const sidebarLinkEls = [
+                ...(sidebar_el ? sidebar_el.querySelectorAll('a[href]') : []),
+                ...document.querySelectorAll('.menu-item a[href], [class*="menu-item"] a[href]'),
+            ];
+            const sidebarLinksSeen = new Set();
+            const sidebar_links = sidebarLinkEls
                     .filter(a => {
                         const s = window.getComputedStyle(a);
                         return s.display !== 'none' && a.textContent.trim().length > 0;
                     })
                     .map(a => ({
-                        text: (a.textContent || '').trim().replace(/\\s+/g, ' ').substring(0, 80),
+                        text: (a.textContent || '').trim().replace(/\s+/g, ' ').substring(0, 80),
                         href: a.href || '',
                         aria_label: a.getAttribute('aria-label') || null,
                     }))
-                    .filter(l => l.text.length > 0)
-                    .slice(0, 60)
-                : [];
+                    .filter(l => {
+                        if (!l.text.length || !l.href || sidebarLinksSeen.has(l.href)) return false;
+                        sidebarLinksSeen.add(l.href);
+                        return true;
+                    })
+                    .slice(0, 60);
 
             const dropdowns  = [...document.querySelectorAll('select, [role="listbox"], .dropdown')]
                 .map(d => ({ id: d.id || null }));
@@ -554,8 +569,8 @@ def _read_auth_config() -> dict | None:
     """
     Reads login config from environment variables.
     Returns None if CRAWLER_USERNAME is not set (no auth needed).
-
-    .env variables:
+ 
+    Standard .env variables:
         CRAWLER_LOGIN_URL=http://example.com/login
         CRAWLER_USERNAME_FIELD=#txtUserName
         CRAWLER_PASSWORD_FIELD=#txtPwd
@@ -564,6 +579,16 @@ def _read_auth_config() -> dict | None:
         CRAWLER_PASSWORD=password
         CRAWLER_SUCCESS_URL=/dashboard
         CRAWLER_SKIP_URLS=/logout,/signout
+ 
+    NEW — Extra fields (for multi-field login forms):
+        CRAWLER_EXTRA_FIELDS=company_code,unique_code
+        CRAWLER_FIELD_company_code_SELECTOR=#txtCompanyCode
+        CRAWLER_FIELD_company_code_VALUE=VC00008
+        CRAWLER_FIELD_unique_code_SELECTOR=#txtUniqueCode
+        CRAWLER_FIELD_unique_code_VALUE=SBCI
+ 
+    Backward compatible: if CRAWLER_EXTRA_FIELDS is not set,
+    extra_fields returns [] and _do_login behaves exactly as before.
     """
     # Re-read .env at call time — ensures RQ worker threads always pick up auth vars
     try:
@@ -572,12 +597,27 @@ def _read_auth_config() -> dict | None:
         _load_dotenv(dotenv_path=_Path(__file__).resolve().parent / ".env", override=True)
     except Exception:
         pass
-
+ 
     username = os.environ.get("CRAWLER_USERNAME", "").strip()
     if not username:
         logger.debug("[auth] CRAWLER_USERNAME not set — skipping auth")
         return None
-
+ 
+    # Parse extra pre-auth fields (e.g. company code, unique code)
+    extra_fields_raw = os.environ.get("CRAWLER_EXTRA_FIELDS", "").strip()
+    extra_fields = []
+    if extra_fields_raw:
+        for field_name in [f.strip() for f in extra_fields_raw.split(",") if f.strip()]:
+            selector = os.environ.get(f"CRAWLER_FIELD_{field_name}_SELECTOR", "").strip()
+            value    = os.environ.get(f"CRAWLER_FIELD_{field_name}_VALUE",    "").strip()
+            if selector and value:
+                extra_fields.append({"name": field_name, "selector": selector, "value": value})
+            else:
+                logger.warning(
+                    f"[auth] CRAWLER_EXTRA_FIELDS: '{field_name}' is missing "
+                    f"SELECTOR or VALUE — skipping"
+                )
+ 
     return {
         "login_url":       os.environ.get("CRAWLER_LOGIN_URL", "").strip(),
         "username_field":  os.environ.get("CRAWLER_USERNAME_FIELD", "#txtUserName").strip(),
@@ -587,9 +627,11 @@ def _read_auth_config() -> dict | None:
         "password":        os.environ.get("CRAWLER_PASSWORD", "").strip(),
         "success_url":     os.environ.get("CRAWLER_SUCCESS_URL", "").strip(),
         "skip_urls":       [p.strip() for p in os.environ.get("CRAWLER_SKIP_URLS", "").split(",") if p.strip()],
+        "extra_fields":    extra_fields,   # NEW — empty list if not configured
     }
-
-
+ 
+ 
+# ── THIS FUNCTION MUST STAY HERE — DO NOT MOVE IT ─────────────────────────────
 def _is_skip_url(url: str, auth_cfg: dict | None) -> bool:
     path = urlparse(url).path.lower()
     if "logout" in path or "signout" in path:
@@ -599,40 +641,64 @@ def _is_skip_url(url: str, auth_cfg: dict | None) -> bool:
             if skip_path.lower() in path:
                 return True
     return False
-
-
+ 
+ 
 async def _do_login(context, auth: dict) -> bool:
+    """
+    Authenticates into the target site using the configured credentials.
+    Supports N extra fields before the standard username + password.
+    Extra fields are filled in the order declared in CRAWLER_EXTRA_FIELDS.
+    """
     page = await context.new_page()
     try:
         await page.goto(auth["login_url"], wait_until="domcontentloaded", timeout=20000)
         await page.wait_for_timeout(1000)
+ 
+        # ── Fill extra fields first (e.g. company code, unique code) ──────────
+        # This loop is a no-op when extra_fields is [] (standard 2-field login).
+        for extra in auth.get("extra_fields", []):
+            try:
+                await page.wait_for_selector(extra["selector"], timeout=5000)
+                await page.fill(extra["selector"], extra["value"])
+                await page.wait_for_timeout(300)
+                logger.debug(
+                    f"[auth] Filled extra field '{extra['name']}' → {extra['selector']}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[auth] Could not fill extra field '{extra['name']}' "
+                    f"({extra['selector']}): {e}"
+                )
+ 
+        # ── Fill standard username + password ─────────────────────────────────
         await page.fill(auth["username_field"], auth["username"])
         await page.fill(auth["password_field"], auth["password"])
         await page.click(auth["submit_selector"])
         await page.wait_for_load_state("networkidle", timeout=20000)
         await page.wait_for_timeout(2000)
-
+ 
         current_url = page.url
         success_url = auth.get("success_url", "")
-
+ 
         if success_url and success_url in current_url:
             cookies = await context.cookies()
             logger.info(f"[auth] ✓ Login succeeded — {len(cookies)} cookies captured")
             return True
         elif auth["login_url"].rstrip("/") == current_url.rstrip("/"):
-            logger.warning(f"[auth] ✗ Login failed — still on login page")
+            logger.warning("[auth] ✗ Login failed — still on login page after submit")
             return False
         else:
             cookies = await context.cookies()
-            logger.info(f"[auth] ✓ Redirected to {current_url} — {len(cookies)} cookies captured")
+            logger.info(
+                f"[auth] ✓ Redirected to {current_url} — {len(cookies)} cookies captured"
+            )
             return True
-
+ 
     except Exception as e:
         logger.error(f"[auth] Login error: {e}", exc_info=True)
         return False
     finally:
         await page.close()
-
 
 # ── Main Crawl Loop ────────────────────────────────────────────────────────────
 
@@ -787,7 +853,25 @@ async def crawl_site(
             # ── Screenshot ─────────────────────────────────────────────────
             screenshot_path = f"screenshots/run_{run_id}_{int(time.time()*1000)}.png"
             try:
-                await page.screenshot(path=screenshot_path, full_page=True, timeout=10000)
+                # Wait for page to visually settle before capturing
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                # Hide cookie banners / overlays that block the real UI
+                await page.evaluate("""() => {
+                    const selectors = [
+                        '[class*="cookie"]', '[id*="cookie"]',
+                        '[class*="consent"]', '[id*="consent"]',
+                        '.modal-backdrop', '.overlay',
+                    ];
+                    for (const sel of selectors) {
+                        document.querySelectorAll(sel)
+                            .forEach(el => el.style.display = 'none');
+                    }
+                }""")
+                await page.wait_for_timeout(3000)
+                await page.screenshot(path=screenshot_path, full_page=True, timeout=15000)
             except Exception:
                 screenshot_path = None
 

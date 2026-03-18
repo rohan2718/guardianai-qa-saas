@@ -87,12 +87,34 @@ def _path(url: str) -> str:
     return urlparse(url).path or "/"
 
 
+_CDN_HOSTS = [
+    "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "googleapis.com",
+    "gstatic.com", "unpkg.com", "ajax.googleapis.com",
+]
+
+def _non_cdn_js_errors(js_errors: list) -> list:
+    """Returns only JS errors that are not external CDN 404s."""
+    result = []
+    for e in js_errors:
+        msg = e.get("message", str(e)) if isinstance(e, dict) else str(e)
+        if not any(cdn in msg for cdn in _CDN_HOSTS):
+            result.append(e)
+    return result
+
+
 def _js_error_summary(js_errors: list) -> str:
     """
     Formats JS errors for bug description.
     Handles both legacy string format and v2 dict format
     {message, stack, source, location}.
+    Filters out external CDN 404s — not actionable by the site owner.
     """
+    # Filter out external CDN 404s
+    filtered = _non_cdn_js_errors(js_errors)
+    # Use filtered list if it has items, otherwise keep all (avoid empty report)
+    if filtered:
+        js_errors = filtered
+
     if not js_errors:
         return "No JS errors recorded."
 
@@ -203,10 +225,10 @@ _SCAN_RULES = [
     },
     {
         "id": "js_errors",
-        "check": lambda p: bool(p.get("js_errors")),
-        "severity": "critical",
+        "check": lambda p: bool(_non_cdn_js_errors(p.get("js_errors") or [])),
+        "severity": "medium",
         "bug_type": "functional",
-        "title": lambda p: f"JavaScript Errors Detected ({len(p['js_errors'])} error{'s' if len(p['js_errors']) != 1 else ''}) — {_path(p['url'])}",
+        "title": lambda p: f"JavaScript Errors Detected ({len(_non_cdn_js_errors(p['js_errors']))} error{'s' if len(_non_cdn_js_errors(p['js_errors'])) != 1 else ''}) — {_path(p['url'])}",
         "description": lambda p: (
             f"JavaScript errors were detected on {p['url']} during scan.\n\n"
             f"Error details:\n{_js_error_summary(p['js_errors'])}"
@@ -220,7 +242,7 @@ _SCAN_RULES = [
             "Fix each error in the source code",
         ],
         "expected": "No JavaScript errors in browser console",
-        "actual": lambda p: f"{len(p['js_errors'])} JavaScript error(s) detected",
+        "actual": lambda p: f"{len(_non_cdn_js_errors(p['js_errors']))} JavaScript error(s) detected",
     },
     {
         "id": "http_no_tls",

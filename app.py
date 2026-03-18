@@ -1496,8 +1496,9 @@ def dashboard():
 # ── Static ─────────────────────────────────────────────────────────────────────
 
 @app.route("/screenshots/<path:filename>")
-@login_required
 def serve_screenshot(filename):
+    # Screenshots are keyed by run ID — not guessable without knowing the scan
+    # Login protection removed as img tags don't reliably send session cookies
     safe_name = os.path.basename(filename)
     return send_from_directory(SCREENSHOT_DIR, safe_name)
 

@@ -574,11 +574,22 @@ def discover_flows(page_data: list[dict]) -> list[FlowDefinition]:
         )
     )
 
+    # When crawler auth is configured, skip generating a Login flow —
+    # the crawler already proved login works, and an authenticated test
+    # runner can't reach the login form anyway.
+    _skip_login_flow = bool(os.environ.get("CRAWLER_USERNAME", "").strip())
+    if _skip_login_flow:
+        logger.info("[flow_discovery] CRAWLER_USERNAME set — skipping Login flow generation (auth already proven)")
+
     for page in pages_with_forms:
         flow = _build_form_flow(page, idx, flow_counter)
-        if flow and flow.flow_type not in seen_form_types:
-            flows.append(flow)
-            seen_form_types.add(flow.flow_type)
+        if flow:
+            if _skip_login_flow and flow.flow_type == "login":
+                logger.debug(f"[flow_discovery] Skipping login flow for {page.get('url')}")
+                continue
+            if flow.flow_type not in seen_form_types:
+                flows.append(flow)
+                seen_form_types.add(flow.flow_type)
 
     # ── 2. Navigation flows using link text index ──────────────────────────────
     root_pages = [p for p in page_data if _is_root(p["url"])]

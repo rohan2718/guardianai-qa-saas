@@ -15,6 +15,12 @@ KEY CHANGES v2:
       3. Page <title> if different from previous step's title
   - Duplicate consecutive labels are de-duplicated in flow names.
   - Breadcrumb-based flows added as a bonus source of real user paths.
+
+FIXES APPLIED (cap removals):
+  - root_pages cap raised from [:2] to [:max(5, len(page_data)//2)]
+  - connected pages scan limit raised from [:10] to [:30]
+  - navigation flow hard cap of 6 replaced with dynamic max(len(page_data), 10)
+  - breadcrumb cap raised from 3 to max(5, len(page_data)//2)
 """
 
 from __future__ import annotations
@@ -85,18 +91,18 @@ class FlowDefinition:
 # ── URL Classification ─────────────────────────────────────────────────────────
 
 _URL_PATTERNS = [
-    (r"/(login|signin|log-in|sign-in)",          "login",         "critical", "Login"),
-    (r"/(logout|signout|log-out|sign-out)",       "logout",        "high",     "Logout"),
-    (r"/(register|signup|sign-up|create.account)","registration",  "critical", "Registration"),
-    (r"/(checkout|payment|pay|order)",            "checkout",      "critical", "Checkout"),
-    (r"/(cart|basket|bag)",                       "cart",          "high",     "Cart"),
-    (r"/(product|item|shop|store|catalogue)",     "shop",          "high",     "Product Browse"),
-    (r"/(search|find|query|results)",             "search",        "medium",   "Search"),
-    (r"/(contact|support|help|feedback)",         "contact",       "medium",   "Contact"),
-    (r"/(profile|account|settings|preferences)",  "profile",       "medium",   "Profile"),
-    (r"/(dashboard|home|overview|summary)",       "dashboard",     "high",     "Dashboard"),
-    (r"/(password.reset|forgot.password)",        "password_reset","high",     "Password Reset"),
-    (r"/(subscribe|newsletter|signup)",           "newsletter",    "low",      "Newsletter"),
+    (r"/(login|signin|log-in|sign-in)",           "login",          "critical", "Login"),
+    (r"/(logout|signout|log-out|sign-out)",        "logout",         "high",     "Logout"),
+    (r"/(register|signup|sign-up|create.account)", "registration",   "critical", "Registration"),
+    (r"/(checkout|payment|pay|order)",             "checkout",       "critical", "Checkout"),
+    (r"/(cart|basket|bag)",                        "cart",           "high",     "Cart"),
+    (r"/(product|item|shop|store|catalogue)",      "shop",           "high",     "Product Browse"),
+    (r"/(search|find|query|results)",              "search",         "medium",   "Search"),
+    (r"/(contact|support|help|feedback)",          "contact",        "medium",   "Contact"),
+    (r"/(profile|account|settings|preferences)",   "profile",        "medium",   "Profile"),
+    (r"/(dashboard|home|overview|summary)",        "dashboard",      "high",     "Dashboard"),
+    (r"/(password.reset|forgot.password)",         "password_reset", "high",     "Password Reset"),
+    (r"/(subscribe|newsletter|signup)",            "newsletter",     "low",      "Newsletter"),
 ]
 
 
@@ -199,7 +205,6 @@ def _playwright_link_selector(link_text: str) -> str:
     Generates a robust Playwright selector from link text.
     Prefers get_by_role pattern string for readable output.
     """
-    # Escape any quotes in the link text
     safe = link_text.replace('"', '\\"')
     return f'a:has-text("{safe}"), [role="menuitem"]:has-text("{safe}"), [role="link"]:has-text("{safe}")'
 
@@ -385,10 +390,6 @@ def _build_navigation_flow(
     Uses the link_text_index to get the actual text of the link that
     connects page N to page N+1. This fixes the "ATIRA → ATIRA" problem
     by using real nav labels instead of page <title> tags.
-
-    Selector strategy:
-      - If link text found in index → generate :has-text() selector
-      - If no link text → use URL path label as fallback
     """
     link_text_index = link_text_index or {}
 
@@ -400,23 +401,20 @@ def _build_navigation_flow(
 
     for i, page in enumerate(page_chain, 1):
         if i == 1:
-            # First step: navigate to entry page
             page_label = page.get("title") or _path_label(page["url"])
             detail = f"Open {page_label}"
             action = "navigate"
             selector = None
-            outcome = f"Page loads successfully — {page_label}"
+            outcome = f"Page loads successfully and content is visible"
             step_labels.append(page_label)
         else:
             prev_page = page_chain[i - 2]
             prev_url  = prev_page["url"].rstrip("/")
             curr_url  = page["url"].rstrip("/")
 
-            # Look up the actual link text used to navigate to this page
             link_text = (link_text_index.get(prev_url) or {}).get(curr_url)
 
             if not link_text:
-                # Fallback 1: URL path segment
                 link_text = _path_label(page["url"])
 
             detail   = f'Click "{link_text}"'
@@ -434,18 +432,14 @@ def _build_navigation_flow(
             outcome=outcome,
         ))
 
-    # ── Build a meaningful flow name from real link labels ─────────────────
-    # De-duplicate consecutive identical labels (the root cause of "ATIRA → ATIRA")
+    # De-duplicate consecutive identical labels
     deduped: list[str] = []
     for label in step_labels:
         if not deduped or label.lower().strip() != deduped[-1].lower().strip():
             deduped.append(label)
 
-    # If dedup collapsed everything to 1 label, all pages have identical titles
-    # → fall back to URL path segments which are always unique
     if len(deduped) < 2:
         deduped = [_path_label(p["url"]) for p in page_chain]
-        # Deduplicate again with path labels
         deduped_2: list[str] = []
         for label in deduped:
             if not deduped_2 or label != deduped_2[-1]:
@@ -454,10 +448,8 @@ def _build_navigation_flow(
 
     flow_name = " → ".join(s[:30] for s in deduped)
 
-    # Classify the destination for type/priority
     last = page_chain[-1]
     ft, priority, _ = _classify_url(last["url"])
-    # Navigation flows that don't match a special URL pattern stay as "navigation"
     if ft in ("login", "registration", "checkout"):
         flow_type = ft
     else:
@@ -490,7 +482,6 @@ def _build_breadcrumb_flow(page: dict, flow_counter: list) -> Optional[FlowDefin
     if len(items) < 2:
         return None
 
-    # Remove empty/whitespace items
     items = [i.strip() for i in items if i and i.strip()]
     if len(items) < 2:
         return None
@@ -498,7 +489,6 @@ def _build_breadcrumb_flow(page: dict, flow_counter: list) -> Optional[FlowDefin
     flow_counter[0] += 1
     fid = f"flow_breadcrumb_{flow_counter[0]:03d}"
 
-    # Build synthetic steps from breadcrumb labels
     steps: list[FlowStep] = []
     for i, label in enumerate(items, 1):
         if i == 1:
@@ -591,16 +581,19 @@ def discover_flows(page_data: list[dict]) -> list[FlowDefinition]:
                 flows.append(flow)
                 seen_form_types.add(flow.flow_type)
 
-    # ── 2. Navigation flows using link text index ──────────────────────────────
+    # ── 2. Navigation flows ────────────────────────────────────────────────────
     root_pages = [p for p in page_data if _is_root(p["url"])]
     if not root_pages:
         root_pages = page_data[:1]
 
     visited_chains: set[tuple] = set()
 
-    for root in root_pages[:2]:
+    # FIX 1: raised cap from [:2] to dynamic [:max(5, len(page_data)//2)]
+    for root in root_pages[:max(5, len(page_data) // 2)]:
         connected = root.get("connected_pages") or []
-        for linked_url in connected[:10]:
+
+        # FIX 2: raised connected pages scan limit from [:10] to [:30]
+        for linked_url in connected[:30]:
             linked_url_norm = linked_url.rstrip("/")
             linked_page = idx.get(linked_url_norm)
             if not linked_page:
@@ -628,13 +621,15 @@ def discover_flows(page_data: list[dict]) -> list[FlowDefinition]:
                     root, chain, flow_counter, link_text_index
                 ))
 
-        if len([f for f in flows if f.flow_type == "navigation"]) >= 6:
+        # FIX 3: replaced hard cap of 6 with dynamic max(len(page_data), 10)
+        if len([f for f in flows if f.flow_type == "navigation"]) >= max(len(page_data), 10):
             break
 
     # ── 3. Breadcrumb flows ────────────────────────────────────────────────────
     breadcrumb_flows_added = 0
     for page in page_data:
-        if breadcrumb_flows_added >= 3:
+        # FIX 4: raised breadcrumb cap from 3 to max(5, len(page_data)//2)
+        if breadcrumb_flows_added >= max(5, len(page_data) // 2):
             break
         bc_flow = _build_breadcrumb_flow(page, flow_counter)
         if bc_flow:
