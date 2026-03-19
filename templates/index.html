@@ -1757,6 +1757,374 @@
         opacity: 0.4;
       }
     </style>
+    <style id="deep-qa-styles">
+      /* ── Deep QA Section ─────────────────────────────────────────────────────── */
+      .dqa-section {
+        margin-top: 20px;
+        border-top: 2px solid var(--primary);
+        padding-top: 18px;
+      }
+      .dqa-section-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--primary);
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin-bottom: 14px;
+      }
+      .dqa-section-title i {
+        font-size: 13px;
+      }
+
+      /* ── Summary bar ─────────────────────────────────────────────────────────── */
+      .dqa-summary-bar {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        background: #f8fafc;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        font-size: 12px;
+        font-weight: 600;
+        align-items: center;
+      }
+      .dqa-summary-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--text-muted);
+      }
+      .dqa-summary-chip.has-fail {
+        color: var(--danger);
+      }
+      .dqa-summary-chip.all-pass {
+        color: var(--success);
+      }
+      .dqa-score {
+        margin-left: auto;
+        font-size: 14px;
+        font-weight: 800;
+        font-family: var(--font-code);
+      }
+      .dqa-score.high {
+        color: var(--success);
+      }
+      .dqa-score.medium {
+        color: var(--warning);
+      }
+      .dqa-score.low {
+        color: var(--danger);
+      }
+
+      /* ── Element row (buttons / links) ───────────────────────────────────────── */
+      .dqa-element-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 10px;
+        border-radius: 6px;
+        margin-bottom: 3px;
+        font-size: 12px;
+        border: 1px solid transparent;
+        transition: background 0.1s;
+      }
+      .dqa-element-row.status-pass {
+        background: rgba(16, 185, 129, 0.05);
+        border-color: rgba(16, 185, 129, 0.15);
+      }
+      .dqa-element-row.status-fail {
+        background: rgba(239, 68, 68, 0.05);
+        border-color: rgba(239, 68, 68, 0.2);
+      }
+      .dqa-element-row.status-warning {
+        background: rgba(245, 158, 11, 0.05);
+        border-color: rgba(245, 158, 11, 0.15);
+      }
+      .dqa-element-row.status-skip {
+        background: #f8fafc;
+        opacity: 0.6;
+      }
+      .dqa-status-icon {
+        font-size: 13px;
+        flex-shrink: 0;
+        width: 16px;
+        text-align: center;
+      }
+      .dqa-element-type {
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        background: #f1f5f9;
+        color: #64748b;
+        padding: 2px 6px;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+      .dqa-element-label {
+        font-weight: 600;
+        color: var(--text-main);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dqa-element-result {
+        font-size: 11px;
+        color: var(--text-muted);
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dqa-selector {
+        font-family: var(--font-code);
+        font-size: 10px;
+        color: #6366f1;
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dqa-failure-reason {
+        color: var(--danger);
+        font-size: 11px;
+        margin-top: 3px;
+        padding-left: 26px;
+        line-height: 1.4;
+      }
+
+      /* ── Form card ───────────────────────────────────────────────────────────── */
+      .dqa-form-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 12px;
+      }
+      .dqa-form-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        background: #f8fafc;
+        font-size: 13px;
+        font-weight: 600;
+        border-bottom: 1px solid var(--border);
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .dqa-status-badge {
+        font-size: 10px;
+        padding: 2px 9px;
+        border-radius: 20px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      .dqa-status-badge.pass {
+        background: rgba(16, 185, 129, 0.1);
+        color: #059669;
+      }
+      .dqa-status-badge.fail {
+        background: rgba(239, 68, 68, 0.1);
+        color: #dc2626;
+      }
+      .dqa-status-badge.warning {
+        background: rgba(245, 158, 11, 0.1);
+        color: #b45309;
+      }
+      .dqa-status-badge.skip {
+        background: rgba(100, 116, 139, 0.1);
+        color: #64748b;
+      }
+      .dqa-fields-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+      .dqa-fields-table th {
+        background: #f8fafc;
+        padding: 7px 10px;
+        text-align: left;
+        font-size: 10px;
+        text-transform: uppercase;
+        color: #94a3b8;
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+      }
+      .dqa-fields-table td {
+        padding: 7px 10px;
+        border-bottom: 1px solid #f1f5f9;
+        color: var(--text-main);
+        vertical-align: middle;
+      }
+      .dqa-fields-table tr:last-child td {
+        border-bottom: none;
+      }
+      .dqa-fields-table tr.status-fail td {
+        background: rgba(239, 68, 68, 0.03);
+      }
+      .dqa-value-cell {
+        font-family: var(--font-code);
+        font-size: 10px;
+        color: var(--text-muted);
+        max-width: 120px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dqa-submission-result {
+        padding: 10px 14px;
+        font-size: 12px;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .dqa-submission-result.success {
+        background: rgba(16, 185, 129, 0.05);
+        color: #059669;
+      }
+      .dqa-submission-result.fail {
+        background: rgba(239, 68, 68, 0.05);
+        color: #dc2626;
+      }
+      .dqa-submission-result.warning {
+        background: rgba(245, 158, 11, 0.05);
+        color: #b45309;
+      }
+
+      /* ── Links table ─────────────────────────────────────────────────────────── */
+      .dqa-links-section {
+        margin-bottom: 12px;
+      }
+      .dqa-links-toggle {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--primary);
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+        padding: 4px 0;
+      }
+      .dqa-links-toggle:hover {
+        text-decoration: underline;
+      }
+      .dqa-links-table-wrap {
+        display: none;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .dqa-links-table-wrap.open {
+        display: block;
+      }
+      .dqa-links-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+      .dqa-links-table th {
+        background: #f8fafc;
+        padding: 6px 10px;
+        text-align: left;
+        font-size: 10px;
+        text-transform: uppercase;
+        color: #94a3b8;
+        border-bottom: 1px solid var(--border);
+      }
+      .dqa-links-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid #f1f5f9;
+      }
+      .dqa-links-table tr:last-child td {
+        border-bottom: none;
+      }
+      .dqa-link-url {
+        font-family: var(--font-code);
+        font-size: 10px;
+        color: var(--text-muted);
+        max-width: 260px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: block;
+      }
+
+      /* ── Collapsible sub-sections ────────────────────────────────────────────── */
+      .dqa-subsection {
+        margin-bottom: 14px;
+      }
+      .dqa-subsection-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .dqa-subsection-header:hover {
+        color: var(--primary);
+      }
+      .dqa-subsection-header .dqa-count-badge {
+        background: #f1f5f9;
+        color: var(--text-muted);
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 20px;
+      }
+      .dqa-subsection-header .dqa-fail-badge {
+        background: rgba(239, 68, 68, 0.1);
+        color: #dc2626;
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 20px;
+      }
+      .dqa-subsection-body {
+        display: block;
+      }
+      .dqa-subsection-body.collapsed {
+        display: none;
+      }
+
+      /* ── Not run state ───────────────────────────────────────────────────────── */
+      .dqa-not-run {
+        color: #94a3b8;
+        font-size: 12px;
+        font-style: italic;
+        padding: 16px 0;
+        text-align: center;
+      }
+
+      /* ── Screenshot thumbnail ────────────────────────────────────────────────── */
+      .dqa-screenshot-thumb {
+        width: 80px;
+        height: 45px;
+        object-fit: cover;
+        object-position: top;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+        cursor: pointer;
+        flex-shrink: 0;
+      }
+      .dqa-screenshot-thumb:hover {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+      }
+    </style>
   </head>
   <body>
     {% include "partials/sidebar.html" %}
@@ -2358,29 +2726,59 @@
                           {% set a11yc = p.get('accessibility_issues') or 0 %}
                           {% set bl = p.get('broken_links') or [] %} {% set jsl
                           = p.get('js_errors') or [] %}
+                          <!-- FIX 1 START -->
                           <span
                             class="issue-tag"
-                            style="background: {% if a11yc>0 %}#fef3c7; color:#b45309{% else %}#dcfce7; color:#166534{% endif %}"
-                            >{{ a11yc }} A11y Issues</span
+                            title="Web accessibility problems: missing alt text, unlabeled buttons, poor color contrast. Affects users with disabilities and screen readers."
+                            style="background: {% if a11yc > 0 %}#fee2e2; color:#b91c1c{% else %}#dcfce7; color:#166534{% endif %}"
                           >
+                            {{ a11yc }} Accessibility Issue{{ 's' if a11yc != 1
+                            else '' }}
+                          </span>
+
                           <span
                             class="issue-tag"
-                            style="background: {% if bl|length>0 %}#fee2e2; color:#b91c1c{% else %}#dcfce7; color:#166534{% endif %}"
-                            >{{ bl|length }} Broken Links</span
+                            title="Links on this page that returned a 404 error or failed to load during the scan."
+                            style="background: {% if bl|length > 0 %}#fee2e2; color:#b91c1c{% else %}#dcfce7; color:#166534{% endif %}"
                           >
+                            {{ bl|length }} Broken Link{{ 's' if bl|length != 1
+                            else '' }}
+                          </span>
+
                           <span
                             class="issue-tag"
-                            style="background: {% if jsl|length>0 %}#fee2e2; color:#b91c1c{% else %}#dcfce7; color:#166534{% endif %}"
-                            >{{ jsl|length }} JS Errors</span
+                            title="JavaScript errors detected while the page loaded. These can break buttons, forms, or other interactive features."
+                            style="background: {% if jsl|length > 0 %}#fee2e2; color:#b91c1c{% else %}#dcfce7; color:#166534{% endif %}"
                           >
-                          {# AFTER — safe #} {% set lt = p.get('load_time') %}
+                            {{ jsl|length }} Script Error{{ 's' if jsl|length !=
+                            1 else '' }}
+                          </span>
+
+                          {% set lt = p.get('load_time') %} {% if lt is not none
+                          %} {% if lt < 2 %} {% set lt_bg = '#dcfce7' %}{% set
+                          lt_color = '#166534' %}{% set lt_label = 'Fast' %}
+                          {% elif lt < 5 %} {% set lt_bg = '#fef9c3' %}{% set
+                          lt_color = '#854d0e' %}{% set lt_label = 'Moderate'
+                          %} {% else %} {% set lt_bg = '#fee2e2' %}{% set
+                          lt_color = '#b91c1c' %}{% set lt_label = 'Slow' %}
+                          {% endif %}
+                          <span
+                            class="issue-tag"
+                            title="Total time for this page to fully load. Under 2s is ideal. Over 5s will frustrate users and hurt SEO."
+                            style="background: {{ lt_bg }}; color: {{ lt_color }}"
+                          >
+                            {{ lt_label }} ({{ "%.2f"|format(lt) }}s)
+                          </span>
+                          {% else %}
                           <span
                             class="issue-tag"
                             style="background: #f1f5f9; color: #475569"
+                            title="Load time was not recorded for this page."
                           >
-                            Load: {% if lt is not none %}{{ "%.2f"|format(lt)
-                            }}s{% else %}—{% endif %}
+                            Load: —
                           </span>
+                          {% endif %}
+                          <!-- FIX 1 END -->
                         </div>
 
                         {% set ui_s = p.get('ui_summary') or {} %} {% if ui_s %}
@@ -2481,6 +2879,25 @@
                         />
                       </div>
                       {% endif %}
+                    </div>
+                    <div
+                      class="dqa-section"
+                      id="dqa-section-{{ loop.index0 }}"
+                      style="display: none"
+                    >
+                      <div class="dqa-section-title">
+                        <i class="fa-solid fa-robot"></i>
+                        Deep QA &mdash; Real Browser Interaction Tests
+                      </div>
+                      <div id="dqa-content-{{ loop.index0 }}">
+                        <p class="dqa-not-run">
+                          <i
+                            class="fa-solid fa-circle-notch fa-spin"
+                            style="margin-right: 6px"
+                          ></i>
+                          Loading deep QA results&hellip;
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -3628,7 +4045,8 @@
                     : "";
 
                   // Format text: escape HTML then convert newlines to <br>
-                  const formatText = (t) => esc(t || "—").replace(/\n/g, "<br>");
+                  const formatText = (t) =>
+                    esc(t || "—").replace(/\n/g, "<br>");
 
                   // Screenshot from the affected page
                   const screenshotHtml = bug.screenshot_path
@@ -3664,10 +4082,10 @@
         <h5><i class="fa-solid fa-arrows-left-right"></i> Expected vs Actual</h5>
         <div class="qa-compare-row">
           <div class="qa-compare-box expected">
-            <strong>✓ Expected</strong>${formatText(bug.expected_result)}
+            <strong><i class="fa-solid fa-check" style="color:#10b981;margin-right:4px;"></i>Expected</strong>${formatText(bug.expected_result)}
           </div>
           <div class="qa-compare-box actual">
-            <strong>✗ Actual</strong>${formatText(bug.actual_result)}
+            <strong><i class="fa-solid fa-xmark" style="color:#ef4444;margin-right:4px;"></i>Actual</strong>${formatText(bug.actual_result)}
           </div>
         </div>
       </div>
@@ -3793,6 +4211,7 @@
                   closeTcDrawer();
                 }
 
+                // ── REPLACEMENT: openTcDetail with iconic steps + real actual result ──
                 function openTcDetail(idx) {
                   const filtered =
                     state.testsFilter === "all"
@@ -3810,43 +4229,146 @@
 
                   title.innerHTML = `${statusPill(tc.status)} &nbsp;<span style="font-family:var(--font-code);color:var(--primary)">${esc(tc.tc_id)}</span> — ${esc(truncate(tc.scenario, 60))}`;
 
+                  // ── Preconditions ────────────────────────────────────────────────────────
                   const preCondHtml = (tc.preconditions || []).length
                     ? `<ul>${tc.preconditions.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>`
                     : '<p style="color:var(--text-muted)">None recorded.</p>';
 
-                  const stepsHtml = (tc.steps || []).length
-                    ? `<ol>${tc.steps.map((s) => `<li><strong>${esc(s.action || "")}:</strong> ${esc(s.description || s.action_detail || "")}</li>`).join("")}</ol>`
-                    : '<p style="color:var(--text-muted)">No steps.</p>';
+                  // ── Steps: iconic, color-coded per action type ───────────────────────────
+                  const ACTION_META = {
+                    navigate: {
+                      icon: "fa-location-arrow",
+                      color: "#6366f1",
+                      label: "Navigate",
+                    },
+                    click: {
+                      icon: "fa-hand-pointer",
+                      color: "#ec4899",
+                      label: "Click",
+                    },
+                    fill: {
+                      icon: "fa-pen-to-square",
+                      color: "#f59e0b",
+                      label: "Fill",
+                    },
+                    assert: {
+                      icon: "fa-circle-check",
+                      color: "#10b981",
+                      label: "Assert",
+                    },
+                    wait: { icon: "fa-clock", color: "#64748b", label: "Wait" },
+                  };
 
+                  const stepsHtml = (tc.steps || []).length
+                    ? `<ol style="list-style:none;padding:0;margin:0;">` +
+                      (tc.steps || [])
+                        .map((s, si) => {
+                          const action = (s.action || "step").toLowerCase();
+                          const meta = ACTION_META[action] || {
+                            icon: "fa-circle-dot",
+                            color: "#94a3b8",
+                            label: action,
+                          };
+                          const desc = esc(
+                            s.description || s.action_detail || s.action || "",
+                          );
+                          const target = s.target
+                            ? `<div style="font-size:10px;color:#94a3b8;font-family:monospace;margin-top:3px;">→ ${esc(s.target)}</div>`
+                            : "";
+                          return `
+          <li style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;
+            border-bottom:1px solid #f1f5f9;">
+            <div style="display:flex;align-items:center;justify-content:center;
+              width:22px;height:22px;border-radius:50%;
+              background:${meta.color}18;flex-shrink:0;margin-top:1px;">
+              <i class="fa-solid ${meta.icon}" style="font-size:9px;color:${meta.color};"></i>
+            </div>
+            <div style="flex:1;min-width:0;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
+                <span style="font-size:9px;font-weight:800;color:${meta.color};
+                  text-transform:uppercase;letter-spacing:0.6px;">${si + 1}. ${meta.label}</span>
+              </div>
+              <div style="font-size:12px;color:#374151;line-height:1.5;">${desc}</div>
+              ${target}
+            </div>
+          </li>`;
+                        })
+                        .join("") +
+                      `</ol>`
+                    : `<p style="color:#94a3b8;font-size:12px;font-style:italic;padding:8px 0;line-height:1.6;">
+        No steps were recorded for this test case. The flow may not have had enough
+        interaction data during the scan.
+      </p>`;
+
+                  // ── Expected vs Actual: status-aware, reads real actual_result ───────────
+                  const STATUS_META = {
+                    pass: {
+                      label: "All steps passed",
+                      color: "#059669",
+                      bg: "#f0fdf4",
+                    },
+                    fail: {
+                      label: "Test failed",
+                      color: "#dc2626",
+                      bg: "#fef2f2",
+                    },
+                    partial: {
+                      label: "Partially passed",
+                      color: "#d97706",
+                      bg: "#fffbeb",
+                    },
+                    pending: {
+                      label: "— Not yet executed",
+                      color: "#94a3b8",
+                      bg: "#f8fafc",
+                    },
+                  };
+                  const sm = STATUS_META[tc.status] || STATUS_META["pending"];
+                  const actualText =
+                    tc.actual_result ||
+                    (tc.status === "pass"
+                      ? "All steps executed successfully without errors."
+                      : tc.status === "pending"
+                        ? "This test case has not been run yet."
+                        : "No result was recorded.");
+
+                  const compareHtml = `
+    <div class="qa-compare-row">
+      <div class="qa-compare-box expected">
+        <strong style="display:block;margin-bottom:6px;color:#059669;">✓ Expected</strong>
+        <span style="font-size:12px;color:#374151;line-height:1.6;">${esc(tc.expected_result || "—")}</span>
+      </div>
+      <div class="qa-compare-box actual"
+        style="border-left:3px solid ${sm.color};background:${sm.bg};">
+        <strong style="display:block;margin-bottom:6px;color:${sm.color};">${sm.label}</strong>
+        <span style="font-size:12px;color:#374151;line-height:1.6;">${esc(actualText)}</span>
+      </div>
+    </div>`;
+
+                  // ── Playwright snippet (unchanged) ───────────────────────────────────────
                   const snippetHtml = tc.playwright_snippet
                     ? `<div class="qa-detail-section full-width">
-           <h5><i class="fa-solid fa-code"></i> Playwright Snippet</h5>
-           <div class="qa-code-block">${esc(tc.playwright_snippet)}</div>
-         </div>`
+         <h5><i class="fa-solid fa-code"></i> Playwright Snippet</h5>
+         <div class="qa-code-block">${esc(tc.playwright_snippet)}</div>
+       </div>`
                     : "";
 
+                  // ── Assemble drawer body ─────────────────────────────────────────────────
                   body.innerHTML = `
-      <div class="qa-detail-section">
-        <h5><i class="fa-solid fa-shield-check"></i> Preconditions</h5>
-        ${preCondHtml}
-      </div>
-      <div class="qa-detail-section">
-        <h5><i class="fa-solid fa-list-ol"></i> Test Steps</h5>
-        ${stepsHtml}
-      </div>
-      <div class="qa-detail-section full-width">
-        <h5><i class="fa-solid fa-arrows-left-right"></i> Expected vs Actual</h5>
-        <div class="qa-compare-row">
-          <div class="qa-compare-box expected">
-            <strong>✓ Expected</strong>${esc(tc.expected_result || "—")}
-          </div>
-          <div class="qa-compare-box actual">
-            <strong>→ Actual</strong>${esc(tc.actual_result || "Not yet executed")}
-          </div>
-        </div>
-      </div>
-      ${snippetHtml}
-    `;
+    <div class="qa-detail-section">
+      <h5><i class="fa-solid fa-shield-check"></i> Preconditions</h5>
+      ${preCondHtml}
+    </div>
+    <div class="qa-detail-section">
+      <h5><i class="fa-solid fa-list-ol"></i> Test Steps</h5>
+      ${stepsHtml}
+    </div>
+    <div class="qa-detail-section full-width">
+      <h5><i class="fa-solid fa-arrows-left-right"></i> Expected vs Actual</h5>
+      ${compareHtml}
+    </div>
+    ${snippetHtml}
+  `;
 
                   drawer.classList.add("open");
                   drawer.scrollIntoView({
@@ -4014,6 +4536,11 @@
     <div class="hidden">
       {% if raw_data %} {% for item in raw_data %}
       <div id="source-{{ loop.index0 }}">
+        <input
+          type="hidden"
+          id="page-url-{{ loop.index0 }}"
+          value="{{ item.url }}"
+        />
         <div class="modal-split">
           <div class="modal-left">
             <div class="screenshot-container">
@@ -4042,6 +4569,32 @@
                 <span class="context-row-val"
                   >{{ item.dom_latency or item.load_time }}ms</span
                 >
+              </div>
+              <div
+                class="context-row"
+                style="
+                  flex-direction: column;
+                  align-items: flex-start;
+                  gap: 3px;
+                "
+              >
+                <span class="context-row-key">Scanned URL</span>
+                <a
+                  href="{{ item.url }}"
+                  target="_blank"
+                  rel="noopener"
+                  style="
+                    font-family: var(--font-code);
+                    font-size: 10px;
+                    color: var(--primary);
+                    word-break: break-all;
+                    text-decoration: none;
+                    line-height: 1.4;
+                  "
+                  title="{{ item.url }}"
+                >
+                  {{ item.url }}
+                </a>
               </div>
               <div class="context-row">
                 <span class="context-row-key">Pattern</span>
@@ -4784,44 +5337,49 @@
                 {% endif %}
               </div>
 
+              <!-- FIX 2A START -->
               <div id="tab-content-graph-{{ loop.index0 }}" class="tab-pane">
+                ... {% set cp_count = (item.connected_pages or []) | length %}
+                {% if cp_count > 0 %}
                 <div
                   style="
-                    width: 100%;
-                    height: 100%;
-                    background: #0f172a;
-                    position: relative;
-                    overflow: hidden;
-                    min-height: 400px;
+                    position: absolute;
+                    top: 12px;
+                    left: 12px;
+                    z-index: 20;
+                    background: rgba(99, 102, 241, 0.15);
+                    border: 1px solid rgba(99, 102, 241, 0.3);
+                    color: #a5b4fc;
+                    font-size: 10px;
+                    font-weight: 700;
+                    padding: 4px 10px;
+                    border-radius: 20px;
+                    letter-spacing: 0.5px;
                   "
                 >
-                  <div
-                    style="
-                      position: absolute;
-                      top: 12px;
-                      right: 12px;
-                      z-index: 20;
-                      color: rgba(255, 255, 255, 0.35);
-                      font-size: 10px;
-                      pointer-events: none;
-                      letter-spacing: 0.5px;
-                    "
-                  >
-                    <i class="fa-solid fa-mouse-pointer"></i> SCROLL TO ZOOM
-                  </div>
-                  <div
-                    id="cy-{{ loop.index0 }}"
-                    style="width: 100%; height: 100%"
-                  ></div>
-                  <textarea id="graph-data-{{ loop.index0 }}" class="hidden">
-      {{ (item.connected_pages or []) | tojson }}</textarea
-                  >
-                  <input
-                    type="hidden"
-                    id="root-url-{{ loop.index0 }}"
-                    value="{{ item.url }}"
-                  />
+                  <i
+                    class="fa-solid fa-circle-nodes"
+                    style="margin-right: 4px"
+                  ></i>
+                  {{ cp_count }} connected page{{ 's' if cp_count != 1 else ''
+                  }}
                 </div>
+                {% endif %}
+                <div
+                  id="cy-{{ loop.index0 }}"
+                  style="width: 100%; height: 100%"
+                  data-connected-count="{{ cp_count }}"
+                ></div>
+                <textarea id="graph-data-{{ loop.index0 }}" class="hidden">
+    {{ (item.connected_pages or []) | tojson }}
+  </textarea
+                >
+                <input
+                  type="hidden"
+                  id="root-url-{{ loop.index0 }}"
+                  value="{{ item.url }}"
+                />
+                <!-- FIX 2A END -->
               </div>
             </div>
           </div>
@@ -4992,11 +5550,17 @@
       const modal = document.getElementById("detailsModal");
       const modalContent = document.getElementById("modalContent");
 
+      // REPLACE
       function openModal(index) {
         const sourceDiv = document.getElementById(`source-${index}`);
         if (!sourceDiv) return;
         modalContent.innerHTML = sourceDiv.innerHTML;
-        document.getElementById("modalId").innerText = `ID: RAW-${index}`;
+
+        // Show the actual page URL in the modal header
+        const urlInput = document.getElementById(`page-url-${index}`);
+        const pageUrl = urlInput ? urlInput.value : `RAW-${index}`;
+        document.getElementById("modalId").innerText = pageUrl;
+
         modal.classList.add("open");
         document.body.style.overflow = "hidden";
 
@@ -5038,151 +5602,154 @@
           `#tab-btn-${tabName}-${index}`,
         );
         if (targetBtn) targetBtn.classList.add("active");
-        if (tabName === "graph")
+        if (tabName === "graph") {
           setTimeout(() => {
-            initGraph(index);
-            if (window._cy) window._cy.resize();
+            if (window.initGraphTab) window.initGraphTab(index);
           }, 100);
+        }
       }
 
       // ── Cytoscape Graph ────────────────────────────
-      function initGraph(index) {
-        const container = document
-          .getElementById("modalContent")
-          .querySelector(`#cy-${index}`);
-        if (!container || container.getAttribute("data-initialized") === "true")
-          return;
+      // FIX 2B START
+      window.initGraphTab = function (idx) {
+        const textarea = document.getElementById("graph-data-" + idx);
+        const rootInput = document.getElementById("root-url-" + idx);
+        const container = document.getElementById("cy-" + idx);
+        if (!container) return;
 
-        const rootUrlVal = document
-          .getElementById("modalContent")
-          .querySelector(`#root-url-${index}`).value;
-        const graphEl = document
-          .getElementById("modalContent")
-          .querySelector(`#graph-data-${index}`);
-        const rawLinksVal = graphEl
-          ? (graphEl.value || graphEl.textContent || "[]").trim()
-          : "[]";
-        let links = [];
+        let connectedPages = [];
+        let rootUrl = "";
         try {
-          links = JSON.parse(rawLinksVal);
-        } catch (e) {
-          console.error("JSON Parse Error", e);
+          connectedPages = JSON.parse(textarea ? textarea.textContent : "[]");
+        } catch (e) {}
+        try {
+          rootUrl = rootInput ? rootInput.value : "";
+        } catch (e) {}
+
+        // ── Fallback: no connected pages ──────────────────────────────────────────
+        if (!connectedPages || connectedPages.length === 0) {
+          container.innerHTML = `
+      <div style="display:flex;flex-direction:column;align-items:center;
+        justify-content:center;height:100%;color:rgba(255,255,255,0.4);
+        text-align:center;gap:14px;padding:24px;">
+        <i class="fa-solid fa-network-wired" style="font-size:36px;opacity:0.25;"></i>
+        <div style="font-size:13px;font-weight:700;color:rgba(255,255,255,0.5);">
+          No topology data for this page
+        </div>
+        <div style="font-size:11px;opacity:0.5;max-width:280px;line-height:1.6;">
+          No outbound links to other pages on the same domain were detected during
+          the scan. Try enabling the <strong>Functional</strong> scan filter and rescanning.
+        </div>
+      </div>`;
+          return;
         }
 
-        const elements = [
-          {
-            data: {
-              id: "root",
-              label: "Target",
-              fullUrl: rootUrlVal,
-              type: "root",
-            },
-          },
-        ];
-        links.forEach((link, i) => {
-          const id = `node${i}`;
-          elements.push({ data: { id: id, label: link, type: "child" } });
-          elements.push({ data: { source: "root", target: id } });
+        // ── Build Cytoscape elements ───────────────────────────────────────────────
+        function pathLabel(url) {
+          try {
+            const path = new URL(url).pathname;
+            return path.length > 30 ? path.substring(0, 28) + "…" : path;
+          } catch (e) {
+            return url.substring(0, 30);
+          }
+        }
+
+        const elements = [];
+        elements.push({
+          data: { id: "root", label: pathLabel(rootUrl) || "/", isRoot: true },
         });
+        connectedPages.forEach(function (pageUrl, i) {
+          const nodeId = "node-" + i;
+          elements.push({
+            data: { id: nodeId, label: pathLabel(pageUrl), url: pageUrl },
+          });
+          elements.push({ data: { source: "root", target: nodeId } });
+        });
+
+        // ── Guard: cytoscape.js must be loaded ────────────────────────────────────
+        if (typeof cytoscape === "undefined") {
+          container.innerHTML =
+            '<div style="color:rgba(255,255,255,0.4);padding:24px;font-size:12px;">Cytoscape.js not loaded.</div>';
+          return;
+        }
 
         const cy = cytoscape({
           container: container,
           elements: elements,
-          wheelSensitivity: 0.2,
           style: [
             {
               selector: "node",
               style: {
-                "background-color": "#6366f1",
-                width: "20px",
-                height: "20px",
+                "background-color": "#1e293b",
+                "border-width": 2,
+                "border-color": "#6366f1",
                 label: "data(label)",
-                "font-size": "0px",
-                color: "#fff",
-                "text-outline-color": "#0f172a",
-                "text-outline-width": 2,
+                color: "#94a3b8",
+                "font-size": "10px",
                 "text-valign": "bottom",
-                "text-margin-y": 8,
-                "transition-property":
-                  "background-color, width, height, border-width",
-                "transition-duration": "0.3s",
+                "text-margin-y": "6px",
+                "text-wrap": "wrap",
+                "text-max-width": "120px",
+                width: 28,
+                height: 28,
               },
             },
             {
-              selector: 'node[type="root"]',
+              selector: "node[?isRoot]",
               style: {
-                "background-color": "#ec4899",
-                width: "40px",
-                height: "40px",
-                "border-width": 4,
-                "border-color": "rgba(236,72,153,0.3)",
-                label: "ROOT",
+                "background-color": "#6366f1",
+                "border-color": "#818cf8",
+                color: "#ffffff",
+                "font-weight": 700,
+                "font-size": "11px",
+                width: 40,
+                height: 40,
               },
             },
             {
               selector: "edge",
               style: {
-                width: 1,
+                width: 1.5,
                 "line-color": "#334155",
+                "target-arrow-color": "#475569",
+                "target-arrow-shape": "triangle",
                 "curve-style": "bezier",
-                "target-arrow-shape": "none",
-                "transition-property": "line-color, width",
-                "transition-duration": "0.3s",
+                "arrow-scale": 0.8,
               },
             },
             {
-              selector: ".highlighted",
-              style: {
-                "background-color": "#38bdf8",
-                "line-color": "#38bdf8",
-                width: 3,
-                "z-index": 9999,
-              },
+              selector: "node:selected",
+              style: { "border-color": "#a5b4fc", "border-width": 3 },
             },
-            {
-              selector: "node.highlighted",
-              style: {
-                width: "28px",
-                height: "28px",
-                "font-size": "11px",
-                "font-family": "var(--font-code)",
-              },
-            },
-            { selector: ".faded", style: { opacity: 0.1, "z-index": 0 } },
           ],
           layout: {
             name: "cose",
-            animate: true,
-            animationDuration: 1000,
-            padding: 50,
-            componentSpacing: 100,
-            nodeRepulsion: 400000,
-            edgeElasticity: 100,
-            nestingFactor: 5,
-            gravity: 80,
-            numIter: 1000,
+            animate: false,
+            padding: 32,
+            nodeRepulsion: 8000,
           },
+          userZoomingEnabled: true,
+          userPanningEnabled: true,
         });
 
-        cy.on("mouseover", "node", function (e) {
-          const node = e.target;
-          cy.elements().addClass("faded");
-          node
-            .neighborhood()
-            .add(node)
-            .removeClass("faded")
-            .addClass("highlighted");
-          container.style.cursor = "pointer";
+        // Show URL tooltip on node click
+        cy.on("tap", "node", function (evt) {
+          const node = evt.target;
+          const url = node.data("url");
+          if (url) {
+            const tip = document.createElement("div");
+            tip.textContent = url;
+            tip.style.cssText =
+              "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);" +
+              "background:#1e293b;color:#a5b4fc;padding:6px 14px;border-radius:8px;" +
+              "font-size:11px;font-family:monospace;z-index:9999;pointer-events:none;" +
+              "border:1px solid #334155;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+            document.body.appendChild(tip);
+            setTimeout(() => tip.remove(), 2500);
+          }
         });
-        cy.on("mouseout", "node", function () {
-          cy.elements().removeClass("faded highlighted");
-          container.style.cursor = "default";
-        });
-        cy.resize();
-        window._cy = cy;
-        container.setAttribute("data-initialized", "true");
-      }
-
+      };
+      // FIX 2B END
       document.addEventListener("keydown", function (event) {
         if (event.key === "Escape") closeModal();
       });
@@ -5893,6 +6460,466 @@
           }
         };
       }
+    </script>
+    <script id="deep-qa-js">
+      // ── Deep QA Frontend Renderer v3 — NO EMOJIS, Full FA Icons ──────────────
+      (function () {
+        "use strict";
+
+        const _dqaRendered = new Set();
+
+        // ── FA icon helpers ────────────────────────────────────────────────────
+        function _icon(status) {
+          const s = (status || "").toUpperCase();
+          const MAP = {
+            PASS:    '<i class="fa-solid fa-circle-check"    style="color:#10b981;font-size:13px;"></i>',
+            FAIL:    '<i class="fa-solid fa-circle-xmark"    style="color:#ef4444;font-size:13px;"></i>',
+            WARNING: '<i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b;font-size:13px;"></i>',
+            SKIP:    '<i class="fa-solid fa-circle-minus"    style="color:#94a3b8;font-size:13px;"></i>',
+          };
+          return MAP[s] || MAP.SKIP;
+        }
+
+        function _badge(status) {
+          const s = (status || "skip").toLowerCase();
+          const COLOR = { pass:"#10b981", fail:"#ef4444", warning:"#f59e0b", skip:"#94a3b8", warn:"#f59e0b" };
+          const c = COLOR[s] || "#94a3b8";
+          return `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;background:${c}18;color:${c};border:1px solid ${c}44;">${s.toUpperCase()}</span>`;
+        }
+
+        function _esc(s) {
+          if (!s) return "";
+          return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+        }
+        function _t(s, n) { return s && s.length > n ? s.slice(0, n) + "…" : (s || "—"); }
+
+        function _scoreGauge(score) {
+          const pct = Math.min(100, Math.max(0, score || 0));
+          const col = pct >= 80 ? "#10b981" : pct >= 50 ? "#f59e0b" : "#ef4444";
+          return `
+            <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+              <svg width="52" height="52" viewBox="0 0 52 52">
+                <circle cx="26" cy="26" r="22" fill="none" stroke="#e2e8f0" stroke-width="5"/>
+                <circle cx="26" cy="26" r="22" fill="none" stroke="${col}" stroke-width="5"
+                  stroke-dasharray="${2*3.14159*22}"
+                  stroke-dashoffset="${2*3.14159*22*(1-pct/100)}"
+                  stroke-linecap="round"
+                  transform="rotate(-90 26 26)"/>
+                <text x="26" y="31" text-anchor="middle" font-size="11" font-weight="700" fill="${col}" font-family="JetBrains Mono,monospace">${pct}</text>
+              </svg>
+              <div>
+                <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;">QA Score</div>
+                <div style="font-size:13px;font-weight:700;color:${col};">${pct >= 80 ? "Excellent" : pct >= 50 ? "Needs Work" : "Critical"}</div>
+              </div>
+            </div>`;
+        }
+
+        function _chipBar(summary, jsErrs, qaScore) {
+          const btnFails  = summary.buttons_failed  || 0;
+          const formFails = summary.forms_failed    || 0;
+          const linkBreak = summary.links_broken    || 0;
+          const tblTotal  = summary.total_tables    || 0;
+          const tblPass   = summary.tables_passed   || 0;
+          const btnTotal  = summary.total_buttons   || 0;
+          const btnPass   = summary.buttons_passed  || 0;
+          const frmTotal  = summary.total_forms     || 0;
+          const frmPass   = summary.forms_passed    || 0;
+
+          function chip(icon, label, value, bad) {
+            const col = bad ? "#ef4444" : "#10b981";
+            const bg  = bad ? "rgba(239,68,68,.08)" : "rgba(16,185,129,.08)";
+            const bc  = bad ? "rgba(239,68,68,.25)" : "rgba(16,185,129,.25)";
+            return `<span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:600;background:${bg};border:1px solid ${bc};color:${col};">
+              <i class="${icon}"></i>${label}: <strong>${value}</strong>
+            </span>`;
+          }
+
+          let html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1;">`;
+          html += chip("fa-solid fa-hand-pointer", "Buttons", `${btnPass}/${btnTotal} pass`, btnFails > 0);
+          html += chip("fa-solid fa-wpforms", "Forms", `${frmPass}/${frmTotal} pass`, formFails > 0);
+          html += chip("fa-solid fa-link" + (linkBreak>0?"-slash":""), "Links", `${linkBreak} broken`, linkBreak > 0);
+          if (tblTotal > 0)
+            html += chip("fa-solid fa-table", "Tables", `${tblPass}/${tblTotal} pass`, tblPass < tblTotal);
+          if (jsErrs.length > 0)
+            html += chip("fa-solid fa-bolt", "JS Errors", jsErrs.length, true);
+          html += `</div>`;
+          return html;
+        }
+
+        // ── Buttons Section ────────────────────────────────────────────────────
+        function _renderButtons(buttons) {
+          if (!buttons.length) return "";
+          const fails = buttons.filter(b => b.status === "FAIL").length;
+          const warns = buttons.filter(b => b.status === "WARNING").length;
+          const rows  = buttons.map(btn => {
+            const s = (btn.status||"skip").toLowerCase();
+            return `
+              <tr style="border-bottom:1px solid #f1f5f9;background:${s==="fail"?"rgba(239,68,68,.03)":""};">
+                <td style="padding:8px 12px;width:28px;">${_icon(btn.status)}</td>
+                <td style="padding:8px 12px;">
+                  <span style="font-weight:600;font-size:13px;">${_esc(_t(btn.label,40))}</span>
+                  ${btn.failure_reason ? `<div style="font-size:11px;color:#ef4444;margin-top:2px;"><i class="fa-solid fa-arrow-turn-down-right" style="margin-right:4px;"></i>${_esc(_t(btn.failure_reason,100))}</div>` : ""}
+                </td>
+                <td style="padding:8px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#64748b;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(_t(btn.selector,30))}</td>
+                <td style="padding:8px 12px;font-size:12px;color:#475569;max-width:200px;">${_esc(_t(btn.action_result,60))}</td>
+                <td style="padding:8px 4px;">${btn.screenshot_path ? `<a href="/${_esc(btn.screenshot_path)}" target="_blank" style="font-size:10px;color:var(--primary);"><i class="fa-solid fa-camera"></i></a>` : ""}</td>
+              </tr>`;
+          }).join("");
+
+          return `
+            <div class="dqa-subsection">
+              <div class="dqa-subsection-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+                <i class="fa-solid fa-hand-pointer" style="color:var(--primary);"></i>
+                <span>BUTTONS <span class="dqa-count-badge">${buttons.length}</span></span>
+                ${fails > 0 ? `<span class="dqa-fail-badge"><i class="fa-solid fa-circle-xmark"></i> ${fails} failed</span>` : `<span style="font-size:11px;color:#10b981;font-weight:600;"><i class="fa-solid fa-check"></i> All passing</span>`}
+                ${warns > 0 ? `<span style="font-size:11px;color:#f59e0b;font-weight:600;"><i class="fa-solid fa-triangle-exclamation"></i> ${warns} warning</span>` : ""}
+                <i class="fa-solid fa-chevron-down" style="margin-left:auto;font-size:10px;color:#94a3b8;"></i>
+              </div>
+              <div class="dqa-subsection-body">
+                <table style="width:100%;border-collapse:collapse;">
+                  <thead>
+                    <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;width:28px;"></th>
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;">Button Label</th>
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;">Selector</th>
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;">What Happened</th>
+                      <th style="width:28px;"></th>
+                    </tr>
+                  </thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </div>`;
+        }
+
+        // ── Forms Section ──────────────────────────────────────────────────────
+        function _renderForms(forms) {
+          if (!forms.length) return "";
+          const fails = forms.filter(f => f.submission_status === "FAIL").length;
+
+          const cards = forms.map(form => {
+            const fields  = form.fields || [];
+            const subStat = (form.submission_status || "skip").toLowerCase();
+            const subCol  = subStat === "pass" ? "#10b981" : subStat === "fail" ? "#ef4444" : "#f59e0b";
+            const subBg   = subStat === "pass" ? "rgba(16,185,129,.06)" : subStat === "fail" ? "rgba(239,68,68,.06)" : "rgba(245,158,11,.06)";
+            const subIcon = subStat === "pass" ? "fa-check-circle" : subStat === "fail" ? "fa-times-circle" : "fa-exclamation-circle";
+
+            const fieldRows = fields.filter(f => !["submit","button","reset"].includes(f.field_type)).map(f => `
+              <tr style="border-bottom:1px solid #f8fafc;">
+                <td style="padding:6px 10px;font-size:12px;font-weight:500;">${_esc(f.name || "—")}</td>
+                <td style="padding:6px 10px;font-family:'JetBrains Mono',monospace;font-size:10px;color:#64748b;">${_esc(f.field_type)}</td>
+                <td style="padding:6px 10px;font-size:11px;">${f.required ? '<span style="color:#ef4444;font-weight:700;">Required</span>' : '<span style="color:#94a3b8;">Optional</span>'}</td>
+                <td style="padding:6px 10px;font-size:11px;font-family:'JetBrains Mono',monospace;color:#475569;">${_esc(_t(f.value_entered, 30))}</td>
+                <td style="padding:6px 10px;">${_icon(f.status)}</td>
+              </tr>`).join("");
+
+            return `
+              <div class="dqa-form-card">
+                <div class="dqa-form-header">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <i class="fa-solid fa-wpforms" style="color:var(--primary);font-size:14px;"></i>
+                    <span style="font-weight:700;font-size:13px;">${_esc(form.form_purpose || "Form")}</span>
+                    <span style="font-size:11px;color:#64748b;">${form.field_count || 0} fields · ${form.required_count || 0} required</span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    ${form.validation_works 
+                      ? '<span style="font-size:11px;color:#10b981;"><i class="fa-solid fa-shield-check"></i> Validates</span>' 
+                      : '<span style="font-size:11px;color:#f59e0b;"><i class="fa-solid fa-shield-exclamation"></i> No validation</span>'}
+                    ${_badge(form.submission_status)}
+                  </div>
+                </div>
+                ${fieldRows ? `
+                <table style="width:100%;border-collapse:collapse;margin:0;">
+                  <thead>
+                    <tr style="background:#f8fafc;">
+                      <th style="padding:6px 10px;font-size:10px;text-transform:uppercase;color:#94a3b8;font-weight:700;text-align:left;">Field</th>
+                      <th style="padding:6px 10px;font-size:10px;text-transform:uppercase;color:#94a3b8;font-weight:700;text-align:left;">Type</th>
+                      <th style="padding:6px 10px;font-size:10px;text-transform:uppercase;color:#94a3b8;font-weight:700;text-align:left;">Required</th>
+                      <th style="padding:6px 10px;font-size:10px;text-transform:uppercase;color:#94a3b8;font-weight:700;text-align:left;">Value Entered</th>
+                      <th style="padding:6px 10px;font-size:10px;text-transform:uppercase;color:#94a3b8;font-weight:700;text-align:left;">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>${fieldRows}</tbody>
+                </table>` : ""}
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:${subBg};border-top:1px solid ${subCol}22;font-size:13px;font-weight:600;color:${subCol};">
+                  <i class="fa-solid ${subIcon}"></i>
+                  <span>${_esc(form.submission_result || "No result")}</span>
+                  ${form.http_response ? `<span style="font-family:'JetBrains Mono',monospace;font-size:10px;background:${subCol}22;padding:2px 7px;border-radius:4px;">HTTP ${form.http_response}</span>` : ""}
+                  ${form.failure_reason ? `<span style="font-size:11px;opacity:.8;margin-left:4px;">${_esc(_t(form.failure_reason,120))}</span>` : ""}
+                  ${form.screenshot_path ? `<a href="/${_esc(form.screenshot_path)}" target="_blank" style="margin-left:auto;font-size:11px;color:${subCol};"><i class="fa-solid fa-camera"></i> Screenshot</a>` : ""}
+                </div>
+              </div>`;
+          }).join("");
+
+          return `
+            <div class="dqa-subsection">
+              <div class="dqa-subsection-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+                <i class="fa-solid fa-wpforms" style="color:var(--primary);"></i>
+                <span>FORMS <span class="dqa-count-badge">${forms.length}</span></span>
+                ${fails > 0 ? `<span class="dqa-fail-badge"><i class="fa-solid fa-circle-xmark"></i> ${fails} failed</span>` : `<span style="font-size:11px;color:#10b981;font-weight:600;"><i class="fa-solid fa-check"></i> All passing</span>`}
+                <i class="fa-solid fa-chevron-down" style="margin-left:auto;font-size:10px;color:#94a3b8;"></i>
+              </div>
+              <div class="dqa-subsection-body">${cards}</div>
+            </div>`;
+        }
+
+        // ── Links Section ──────────────────────────────────────────────────────
+        function _renderLinks(links) {
+          const broken = links.filter(l => l.status === "FAIL");
+          if (!broken.length) return "";
+          const rows = broken.map(l => {
+            const code = l.http_status || 0;
+            return `
+              <tr style="border-bottom:1px solid #f1f5f9;">
+                <td style="padding:7px 12px;font-size:12px;color:#475569;">${_esc(_t(l.text,35))}</td>
+                <td style="padding:7px 12px;font-family:'JetBrains Mono',monospace;font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                  <a href="${_esc(l.url)}" target="_blank" title="${_esc(l.url)}" style="color:var(--primary);">${_esc(_t(l.url,65))}</a>
+                </td>
+                <td style="padding:7px 12px;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:${code>=400?"#ef4444":"#94a3b8"};">${code || "timeout"}</td>
+                <td style="padding:7px 12px;">${_icon(l.status)}</td>
+              </tr>`;
+          }).join("");
+          return `
+            <div class="dqa-subsection dqa-links-section">
+              <div class="dqa-subsection-header">
+                <i class="fa-solid fa-link-slash" style="color:#ef4444;"></i>
+                <span>BROKEN LINKS</span>
+                <span class="dqa-fail-badge"><i class="fa-solid fa-circle-xmark"></i> ${broken.length} broken</span>
+              </div>
+              <div class="dqa-subsection-body">
+                <table style="width:100%;border-collapse:collapse;">
+                  <thead>
+                    <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;">Link Text</th>
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;">URL</th>
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;width:80px;">HTTP</th>
+                      <th style="width:44px;"></th>
+                    </tr>
+                  </thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </div>`;
+        }
+
+        // ── Tables Section ─────────────────────────────────────────────────────
+        function _renderTables(tables) {
+          if (!tables.length) return "";
+          const fails = tables.filter(t => t.status === "FAIL" || t.row_count === 0).length;
+          const rows = tables.map(tbl => {
+            const ok = tbl.row_count > 0;
+            return `
+              <tr style="border-bottom:1px solid #f1f5f9;background:${ok?"":"rgba(245,158,11,.03)"};">
+                <td style="padding:8px 12px;width:28px;">${ok ? _icon("PASS") : _icon("WARNING")}</td>
+                <td style="padding:8px 12px;font-family:'JetBrains Mono',monospace;font-size:11px;color:#475569;">${_esc(_t(tbl.selector,40))}</td>
+                <td style="padding:8px 12px;font-size:12px;font-weight:600;">${tbl.row_count} rows</td>
+                <td style="padding:8px 12px;">
+                  ${tbl.has_pagination ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;background:#f1f5f9;padding:2px 7px;border-radius:4px;color:#64748b;">
+                    <i class="fa-solid fa-file-lines"></i> Paginated ${tbl.pagination_works===true ? _icon("PASS") : tbl.pagination_works===false ? _icon("FAIL") : ""}
+                  </span>` : ""}
+                  ${tbl.has_sorting ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;background:#f1f5f9;padding:2px 7px;border-radius:4px;color:#64748b;margin-left:4px;">
+                    <i class="fa-solid fa-sort"></i> Sortable ${tbl.sorting_works===true ? _icon("PASS") : tbl.sorting_works===false ? _icon("FAIL") : ""}
+                  </span>` : ""}
+                  ${tbl.has_search ? `<span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;background:#f1f5f9;padding:2px 7px;border-radius:4px;color:#64748b;margin-left:4px;">
+                    <i class="fa-solid fa-magnifying-glass"></i> Searchable ${tbl.search_works===true ? _icon("PASS") : tbl.search_works===false ? _icon("FAIL") : ""}
+                  </span>` : ""}
+                </td>
+              </tr>`;
+          }).join("");
+          return `
+            <div class="dqa-subsection">
+              <div class="dqa-subsection-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+                <i class="fa-solid fa-table" style="color:var(--primary);"></i>
+                <span>DATA TABLES <span class="dqa-count-badge">${tables.length}</span></span>
+                ${fails > 0 ? `<span class="dqa-fail-badge"><i class="fa-solid fa-triangle-exclamation"></i> ${fails} issues</span>` : `<span style="font-size:11px;color:#10b981;font-weight:600;"><i class="fa-solid fa-check"></i> All loaded</span>`}
+                <i class="fa-solid fa-chevron-down" style="margin-left:auto;font-size:10px;color:#94a3b8;"></i>
+              </div>
+              <div class="dqa-subsection-body">
+                <table style="width:100%;border-collapse:collapse;">
+                  <thead><tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                    <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;width:28px;"></th>
+                    <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;text-align:left;">Selector</th>
+                    <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;text-align:left;">Rows</th>
+                    <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;color:#64748b;text-align:left;">Features</th>
+                  </tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </div>`;
+        }
+
+        // ── JS Errors Section ──────────────────────────────────────────────────
+        function _renderJSErrors(jsErrs) {
+          if (!jsErrs.length) return "";
+          const items = jsErrs.map(err => `
+            <div style="display:flex;gap:10px;padding:8px 12px;border-bottom:1px solid #f1f5f9;font-family:'JetBrains Mono',monospace;font-size:11px;">
+              <i class="fa-solid fa-bolt" style="color:#ef4444;flex-shrink:0;margin-top:1px;"></i>
+              <span style="color:#475569;word-break:break-all;">${_esc(_t(String(err),250))}</span>
+            </div>`).join("");
+          return `
+            <div class="dqa-subsection">
+              <div class="dqa-subsection-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+                <i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i>
+                <span>JS ERRORS ON LOAD</span>
+                <span class="dqa-fail-badge"><i class="fa-solid fa-bolt"></i> ${jsErrs.length}</span>
+                <i class="fa-solid fa-chevron-down" style="margin-left:auto;font-size:10px;color:#94a3b8;"></i>
+              </div>
+              <div class="dqa-subsection-body collapsed">${items}</div>
+            </div>`;
+        }
+
+        // ── Bugs Summary ───────────────────────────────────────────────────────
+        function _renderBugs(bugs) {
+          if (!bugs || !bugs.length) return "";
+          const sevColor = { critical:"#dc2626", high:"#f59e0b", medium:"#6366f1", low:"#94a3b8" };
+          const items = bugs.map(bug => {
+            const col = sevColor[bug.severity] || "#94a3b8";
+            return `
+              <div style="padding:10px 14px;border-bottom:1px solid #f1f5f9;display:flex;gap:10px;align-items:flex-start;">
+                <span style="width:8px;height:8px;border-radius:50%;background:${col};flex-shrink:0;margin-top:4px;"></span>
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:600;color:#0f172a;">${_esc(_t(bug.title||bug.bug_title,80))}</div>
+                  <div style="font-size:11px;color:#64748b;margin-top:2px;">${_esc(_t(bug.description,120))}</div>
+                </div>
+                <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;background:${col}18;color:${col};border:1px solid ${col}44;flex-shrink:0;">${bug.severity||"?"}</span>
+              </div>`;
+          }).join("");
+          return `
+            <div class="dqa-subsection">
+              <div class="dqa-subsection-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+                <i class="fa-solid fa-bug" style="color:#ef4444;"></i>
+                <span>AUTO-DETECTED BUGS <span class="dqa-count-badge">${bugs.length}</span></span>
+                <i class="fa-solid fa-chevron-down" style="margin-left:auto;font-size:10px;color:#94a3b8;"></i>
+              </div>
+              <div class="dqa-subsection-body collapsed">${items}</div>
+            </div>`;
+        }
+
+        // ── UI Count Note ──────────────────────────────────────────────────────
+        function _renderCountNote(summary, pageUiSummary) {
+          const crawlBtns = (pageUiSummary||{}).buttons || 0;
+          const dqaBtns   = summary.total_buttons || 0;
+          if (!crawlBtns || !dqaBtns || crawlBtns === dqaBtns) return "";
+          return `
+            <div style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(99,102,241,.05);border:1px solid rgba(99,102,241,.15);border-radius:8px;font-size:12px;color:#64748b;margin-bottom:12px;">
+              <i class="fa-solid fa-circle-info" style="color:var(--primary);flex-shrink:0;"></i>
+              <span><strong style="color:#1e293b;">Why ${dqaBtns} buttons here vs ${crawlBtns} in UI Elements above?</strong>
+              UI Elements counts only <em>visible-viewport</em> elements. Deep QA tests <em>all</em> interactive elements including sidebar nav, hidden panels, and off-screen controls.</span>
+            </div>`;
+        }
+
+        // ── Main render ────────────────────────────────────────────────────────
+        window.renderDeepQASection = function (pageData, containerEl, idx) {
+          const dqa = pageData && pageData.ui_summary && pageData.ui_summary.deep_qa;
+          const section = document.getElementById("dqa-section-" + idx);
+          if (!section) return;
+          section.style.display = "block";
+
+          if (!dqa) {
+            containerEl.innerHTML = `
+              <div style="display:flex;align-items:center;gap:10px;padding:14px 18px;background:#f8fafc;border-radius:8px;color:#64748b;font-size:13px;">
+                <i class="fa-solid fa-hourglass-half" style="color:var(--primary);"></i>
+                Deep QA is not yet available for this page. It runs automatically after the scan completes — expand this row again in a few seconds.
+                <button onclick="window.location.reload()" style="margin-left:auto;padding:5px 12px;background:var(--primary);color:white;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;">
+                  <i class="fa-solid fa-rotate-right"></i> Refresh
+                </button>
+              </div>`;
+            return;
+          }
+
+          const summary = dqa.summary || {};
+          const buttons = dqa.buttons || [];
+          const forms   = dqa.forms   || [];
+          const links   = dqa.links   || [];
+          const tables  = dqa.tables  || [];
+          const jsErrs  = dqa.js_errors_on_load || [];
+          const bugs    = dqa.bugs || [];
+          const qaScore = dqa.qa_score || 0;
+
+          // ── Header: score gauge + chip bar ──────────────────────────────────
+          const headerHtml = `
+            <div style="display:flex;align-items:center;gap:16px;padding:14px 16px;background:linear-gradient(135deg,#fafbff,#f8fafc);border:1px solid #e2e8f0;border-radius:10px;margin-bottom:14px;flex-wrap:wrap;">
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                <i class="fa-solid fa-robot" style="color:var(--primary);font-size:16px;"></i>
+                <div>
+                  <div style="font-size:13px;font-weight:700;color:#0f172a;">Deep QA — Real Browser Tests</div>
+                  <div style="font-size:11px;color:#64748b;">Automated like a human QA engineer</div>
+                </div>
+              </div>
+              ${_chipBar(summary, jsErrs, qaScore)}
+              ${_scoreGauge(qaScore)}
+            </div>`;
+
+          const countNote = _renderCountNote(summary, pageData.ui_summary);
+
+          containerEl.innerHTML =
+            headerHtml +
+            countNote +
+            _renderButtons(buttons) +
+            _renderForms(forms) +
+            _renderLinks(links) +
+            _renderTables(tables) +
+            _renderJSErrors(jsErrs) +
+            _renderBugs(bugs);
+        };
+
+        // ── Auto-observe row expand ────────────────────────────────────────────
+        function _initDeepQAObserver() {
+          const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+              if (mutation.type !== "attributes" || mutation.attributeName !== "class") return;
+              const row = mutation.target;
+              if (!row.matches("[data-page-item]")) return;
+              if (!row.classList.contains("open")) return;
+
+              const dqaSection = row.querySelector('[id^="dqa-section-"]');
+              if (!dqaSection) return;
+              const idx = dqaSection.id.replace("dqa-section-", "");
+              if (_dqaRendered.has(idx)) return;
+              _dqaRendered.add(idx);
+
+              const contentContainer = document.getElementById("dqa-content-" + idx);
+              if (!contentContainer) return;
+
+              const pageData = window.RAW_PAGE_DATA && window.RAW_PAGE_DATA[parseInt(idx)];
+              if (pageData) {
+                renderDeepQASection(pageData, contentContainer, idx);
+              } else {
+                contentContainer.innerHTML = `
+                  <div style="padding:12px 16px;font-size:13px;color:#64748b;">
+                    <i class="fa-solid fa-circle-info" style="margin-right:6px;color:var(--primary);"></i>
+                    Deep QA data not available for this page.
+                  </div>`;
+              }
+            });
+          });
+
+          document.querySelectorAll("[data-page-item]").forEach((row) => {
+            observer.observe(row, { attributes: true });
+          });
+
+          // Also try to render immediately for any already-open rows
+          document.querySelectorAll("[data-page-item].open").forEach((row) => {
+            const dqaSection = row.querySelector('[id^="dqa-section-"]');
+            if (!dqaSection) return;
+            const idx = dqaSection.id.replace("dqa-section-", "");
+            if (_dqaRendered.has(idx)) return;
+            _dqaRendered.add(idx);
+            const cc = document.getElementById("dqa-content-" + idx);
+            if (!cc) return;
+            const pd = window.RAW_PAGE_DATA && window.RAW_PAGE_DATA[parseInt(idx)];
+            if (pd) renderDeepQASection(pd, cc, idx);
+          });
+        }
+
+        document.addEventListener("DOMContentLoaded", _initDeepQAObserver);
+      })();
+    </script>
+        </script>
+    <script>
+      // Expose raw page data for Deep QA renderer
+      // NOTE: tojson filter auto-escapes for HTML context
+      window.RAW_PAGE_DATA = {{ raw_data | tojson }};
     </script>
   </body>
 </html>

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Seconds to allow Cohere to respond before giving up and using basic summary
 AI_SUMMARY_TIMEOUT = int(__import__("os").environ.get("AI_SUMMARY_TIMEOUT", 30))
 
+
 def run_qa_pipeline(run_id: int, page_data: list, target_url: str = "") -> dict:
     """
     Full autonomous QA pipeline:
@@ -234,9 +235,6 @@ def _run_tests_sync(test_cases: list[dict], run_id: int, target_url: str) -> lis
                 ignore_https_errors=True,
             )
 
-            # Authenticate before running tests if credentials are configured.
-            # This ensures navigation tests have a valid session and don't
-            # get redirected back to the login page mid-test.
             try:
                 from crawler import _read_auth_config, _do_login
                 auth = _read_auth_config()
@@ -264,6 +262,124 @@ def _run_tests_sync(test_cases: list[dict], run_id: int, target_url: str) -> lis
         return loop.run_until_complete(_execute())
     finally:
         loop.close()
+
+
+def _persist_deep_qa_results(run_id: int, results: list) -> None:
+    """
+    Persist DeepQA results to DB:
+      - Each page result → stored in PageResult.ui_summary JSONB under "deep_qa" key
+      - Each FAIL → BugReport row (source="deep_qa")
+      - TestRun aggregate totals updated
+    """
+    if not results:
+        return
+
+    total_buttons_tested = 0
+    total_buttons_failed = 0
+    total_forms_tested   = 0
+    total_forms_failed   = 0
+    total_links_broken   = 0
+    deep_qa_scores       = []
+
+    with app.app_context():
+        try:
+            for page_result in results:
+                try:
+                    data = page_result.to_dict() if hasattr(page_result, "to_dict") else page_result
+
+                    summary = data.get("summary", {})
+                    total_buttons_tested += summary.get("total_buttons", 0)
+                    total_buttons_failed += summary.get("buttons_failed", 0)
+                    total_forms_tested   += summary.get("total_forms", 0)
+                    total_forms_failed   += summary.get("forms_failed", 0)
+                    total_links_broken   += summary.get("links_broken", 0)
+                    qa_score              = data.get("qa_score", 100.0)
+                    if qa_score is not None:
+                        deep_qa_scores.append(qa_score)
+
+                    # ── Store in PageResult.ui_summary JSONB ──────────────────
+                    pr = PageResult.query.filter_by(
+                        run_id=run_id,
+                        url=data.get("page_url"),
+                    ).first()
+                    if pr:
+                        # CRITICAL: create a NEW dict (not in-place mutation).
+                        # SQLAlchemy does not detect in-place JSONB mutations.
+                        # Assigning the same dict object back silently skips the UPDATE.
+                        from sqlalchemy.orm.attributes import flag_modified
+                        new_summary = dict(pr.ui_summary or {})
+                        new_summary["deep_qa"] = {
+                            "qa_score":          qa_score,
+                            "summary":           summary,
+                            "buttons":           data.get("buttons", []),
+                            "forms":             data.get("forms", []),
+                            "links":             [l for l in data.get("links", []) if l.get("status") == "FAIL"][:20],
+                            "tables":            data.get("tables", []),
+                            "modals":            data.get("modals", []),
+                            "js_errors_on_load": data.get("js_errors_on_load", []),
+                            "broken_images":     data.get("broken_images", []),
+                            "performance":       data.get("performance", {}),
+                        }
+                        pr.ui_summary = new_summary
+                        flag_modified(pr, "ui_summary")  # force SQLAlchemy to include in UPDATE
+
+                    # ── Create BugReport for each failure ─────────────────────
+                    for bug in data.get("bugs", []):
+                        try:
+                            db.session.add(BugReport(
+                                run_id=run_id,
+                                bug_title=bug.get("title", "DeepQA Issue"),
+                                page_url=data.get("page_url"),
+                                bug_type=bug.get("bug_type", "functional"),
+                                severity=bug.get("severity", "medium"),
+                                description=bug.get("description", ""),
+                                impact=bug.get("impact", ""),
+                                steps_to_reproduce=bug.get("steps", []),
+                                expected_result=bug.get("expected", ""),
+                                actual_result=bug.get("actual", ""),
+                                suggested_fix=bug.get("fix", ""),
+                                screenshot_path=bug.get("screenshot_path"),
+                                source="deep_qa",
+                            ))
+                        except Exception as bug_err:
+                            logger.warning(f"[DeepQA persist] Bug insert error: {bug_err}")
+
+                except Exception as page_err:
+                    logger.warning(f"[DeepQA persist] Page result error: {page_err}")
+
+            # ── Update TestRun aggregates ──────────────────────────────────────
+            try:
+                run_obj = db.session.get(TestRun, run_id)
+                if run_obj:
+                    existing_bugs = run_obj.total_bugs or 0
+                    new_bugs = sum(
+                        len(r.to_dict().get("bugs", [])) if hasattr(r, "to_dict") else 0
+                        for r in results
+                    )
+                    if hasattr(run_obj, "total_bugs"):
+                        run_obj.total_bugs = existing_bugs + new_bugs
+
+                    if deep_qa_scores:
+                        avg_dqa = round(sum(deep_qa_scores) / len(deep_qa_scores), 1)
+                        logger.info(f"[DeepQA] Avg QA score for run {run_id}: {avg_dqa}")
+            except Exception as run_err:
+                logger.warning(f"[DeepQA persist] TestRun update error: {run_err}")
+
+            db.session.commit()
+            logger.info(
+                f"[DeepQA persist] Run {run_id}: "
+                f"buttons_tested={total_buttons_tested} failed={total_buttons_failed} "
+                f"forms_tested={total_forms_tested} failed={total_forms_failed} "
+                f"links_broken={total_links_broken}"
+            )
+
+        except Exception as e:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            logger.error(f"[DeepQA persist] Fatal error for run {run_id}: {e}", exc_info=True)
+
 
 def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: list = None):
     """
@@ -326,9 +442,9 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
         with app.app_context():
             run = db.session.get(TestRun, run_id)
             if run:
-                run.status      = "failed"
+                run.status       = "failed"
                 run.error_detail = f"Crawler exception: {str(e)[:500]}"
-                run.finished_at = datetime.now(UTC)
+                run.finished_at  = datetime.now(UTC)
                 db.session.commit()
         return
 
@@ -339,21 +455,22 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
         with app.app_context():
             run = db.session.get(TestRun, run_id)
             if run:
-                run.status       = "target_unreachable"   # new status value
-                run.error_detail = error_msg              # new column — see migration below
+                run.status       = "target_unreachable"
+                run.error_detail = error_msg
                 run.finished_at  = datetime.now(UTC)
                 run.confidence   = 0.0
                 db.session.commit()
         return
 
     # ── Persist results ────────────────────────────────────────────────────────
+    _deep_qa_page_urls = []  # populated inside context, used outside
 
     try:
         import os as _os
         import markdown as _markdown
 
         site_health    = result.get("site_health")    or {}
-        component_avgs = site_health.get("component_averages") or {}   # ← populated after FIX1
+        component_avgs = site_health.get("component_averages") or {}
         score_dist     = site_health.get("score_distribution") or {}
 
         # ── Accumulate aggregate counters from raw page data ─────────────────
@@ -374,7 +491,7 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
 
         for p in pages:
             total_a11y   += p.get("accessibility_issues") or 0
-            total_broken += len(p.get("broken_navigation_links") or [])   # ← FIX3
+            total_broken += len(p.get("broken_navigation_links") or [])
             total_js_err += len(p.get("js_errors") or [])
             lt = p.get("load_time") or 0
             if lt > 3:
@@ -416,7 +533,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             run.risk_category     = site_health.get("risk_category")
             run.confidence_score  = result.get("confidence_score")
 
-            # Component averages — populated after FIX1 adds component_averages key
             run.avg_performance_score   = component_avgs.get("performance")
             run.avg_accessibility_score = component_avgs.get("accessibility")
             run.avg_security_score      = component_avgs.get("security")
@@ -433,9 +549,8 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             run.needs_attention_pages = score_dist.get("Needs Attention", 0)
             run.critical_pages        = score_dist.get("Critical",        0)
 
-            # AI summary stored in DB — survives server restarts / lost files
-            run.ai_summary      = ai_summary_text   # ← FIX4
-            run.ai_summary_html = ai_summary_html   # ← FIX4
+            run.ai_summary      = ai_summary_text
+            run.ai_summary_html = ai_summary_html
 
             # Build PageResult objects in-session before any commit
             try:
@@ -486,7 +601,7 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                         lcp_ms=p.get("lcp_ms"),
                         ttfb_ms=p.get("ttfb_ms"),
                         accessibility_issues=p.get("accessibility_issues"),
-                        broken_links_count=len(p.get("broken_navigation_links") or []),  # ← FIX3
+                        broken_links_count=len(p.get("broken_navigation_links") or []),
                         js_errors_count=len(p.get("js_errors") or []),
                         is_https=p.get("is_https"),
                         screenshot_path=p.get("screenshot"),
@@ -498,48 +613,47 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             # Add all page records to session (no intermediate commit)
             if page_records:
                 db.session.bulk_save_objects(page_records)
+
             try:
                 qa_summary = run_qa_pipeline(run_id, pages, target_url=url)
                 kpis = qa_summary.get("kpis", {})
 
-                # KPI scores from KPI engine — these drive the dashboard cards
                 run.avg_performance_score   = kpis.get("avg_performance_score")
                 run.avg_accessibility_score = kpis.get("avg_accessibility_score")
                 run.avg_security_score      = kpis.get("avg_security_score")
                 run.avg_functional_score    = kpis.get("avg_functional_score")
                 run.avg_ui_form_score       = kpis.get("avg_ui_form_score")
 
-                # Override site health with KPI-computed value when present
                 if kpis.get("site_health_score") is not None:
                     run.site_health_score = kpis["site_health_score"]
                 if kpis.get("risk_category"):
                     run.risk_category = kpis["risk_category"]
 
-                # Issue counts from KPI engine
                 run.slow_pages_count           = kpis.get("slow_pages_count", 0)
                 run.total_broken_links         = kpis.get("total_broken_links", 0)
                 run.total_js_errors            = kpis.get("total_js_errors", 0)
                 run.total_accessibility_issues = kpis.get("total_accessibility_issues", 0)
 
-                # QA pipeline counts — guarded for pre-migration DBs
                 if hasattr(run, "total_bugs"):
-                    run.total_bugs       = qa_summary.get("total_bugs", 0)
-                    run.critical_bugs    = qa_summary.get("critical_bugs", 0)
-                    run.high_bugs        = qa_summary.get("high_bugs", 0)
-                    run.medium_bugs      = qa_summary.get("medium_bugs", 0)
-                    run.low_bugs         = qa_summary.get("low_bugs", 0)
+                    run.total_bugs    = qa_summary.get("total_bugs", 0)
+                    run.critical_bugs = qa_summary.get("critical_bugs", 0)
+                    run.high_bugs     = qa_summary.get("high_bugs", 0)
+                    run.medium_bugs   = qa_summary.get("medium_bugs", 0)
+                    run.low_bugs      = qa_summary.get("low_bugs", 0)
                 if hasattr(run, "total_flows"):
                     run.total_flows      = qa_summary.get("total_flows", 0)
                 if hasattr(run, "total_test_cases"):
                     run.total_test_cases = qa_summary.get("total_test_cases", 0)
                 if hasattr(run, "tests_passed"):
-                    run.tests_passed     = qa_summary.get("tests_passed", 0)
-                    run.tests_failed     = qa_summary.get("tests_failed", 0)
+                    run.tests_passed = qa_summary.get("tests_passed", 0)
+                    run.tests_failed = qa_summary.get("tests_failed", 0)
                 if hasattr(run, "qa_enabled"):
-                    run.qa_enabled       = True
+                    run.qa_enabled = True
             except Exception as qa_err:
                 logger.error(f"QA pipeline error (non-fatal): {qa_err}", exc_info=True)
-            # ── SINGLE ATOMIC COMMIT — TestRun + all PageResults ──────────────
+
+            # ── COMMIT completed IMMEDIATELY — UI reloads, user sees results ──
+            # DeepQA runs AFTER in its own isolated context (no nested session bug)
             try:
                 run.status      = "completed"
                 run.finished_at = datetime.now(UTC)
@@ -554,6 +668,9 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                     run2.finished_at = datetime.now(UTC)
                     db.session.commit()
 
+            # Capture URLs before the outer context closes
+            _deep_qa_page_urls = [p["url"] for p in pages[:20] if p.get("url")]
+
     except Exception as e:
         logger.error(f"Failed to persist results for run {run_id}: {e}", exc_info=True)
         with app.app_context():
@@ -562,6 +679,52 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                 run.status      = "failed"
                 run.finished_at = datetime.now(UTC)
                 db.session.commit()
+        return  # Don't run DeepQA if main scan failed
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # DEEP QA — completely outside the main try/except, in its own fresh context.
+    # _persist_deep_qa_results has its OWN with app.app_context() — no nesting.
+    # This eliminates the SQLAlchemy session invalidation bug entirely.
+    # ══════════════════════════════════════════════════════════════════════════
+    try:
+        from engines.deep_qa_engine import run_deep_qa
+        from playwright.async_api import async_playwright as _async_playwright
+
+        async def _run_deep_qa_session():
+            async with _async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                context = await browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                    ignore_https_errors=True,
+                )
+                try:
+                    from crawler import _read_auth_config, _do_login
+                    auth = _read_auth_config()
+                    if auth:
+                        login_ok = await _do_login(context, auth)
+                        if login_ok:
+                            logger.info("[DeepQA] Session authenticated for deep testing")
+                        else:
+                            logger.warning("[DeepQA] Login failed — testing unauthenticated")
+                except Exception as auth_err:
+                    logger.warning(f"[DeepQA] Auth setup error (non-fatal): {auth_err}")
+
+                deep_results = await run_deep_qa(context, _deep_qa_page_urls, run_id)
+                await browser.close()
+                return deep_results
+
+        logger.info(f"[DeepQA] Starting deep QA for run {run_id} ({len(_deep_qa_page_urls)} pages)")
+        deep_qa_results = asyncio.run(_run_deep_qa_session())
+        _persist_deep_qa_results(run_id, deep_qa_results)
+        logger.info(f"[DeepQA] Complete for run {run_id}: {len(deep_qa_results)} pages deep-tested")
+
+    except Exception as deep_qa_err:
+        logger.error(f"[DeepQA] Pipeline failed (non-fatal): {deep_qa_err}", exc_info=True)
+
 
 def _persist_page_results(run_id: int, pages: list):
     """
@@ -572,7 +735,6 @@ def _persist_page_results(run_id: int, pages: list):
         return
 
     with app.app_context():
-        # Build failure_pattern lookup for similar_issue_ref (efficient raw query)
         existing_patterns: dict = {}
         try:
             from sqlalchemy import text

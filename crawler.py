@@ -858,6 +858,23 @@ async def crawl_site(
                     await page.wait_for_load_state("networkidle", timeout=10000)
                 except Exception:
                     pass
+
+                # ── Guard: if page redirected to login, re-authenticate ──────
+                # This happens when the session expires mid-crawl for some pages.
+                # Re-login and navigate back to the real page before screenshotting.
+                page_url_now = page.url.lower()
+                auth_cfg = _read_auth_config()
+                login_indicators = ["login", "signin", "sign-in", "account/login"]
+                if auth_cfg and any(ind in page_url_now for ind in login_indicators):
+                    logger.warning(f"[screenshot] Session lost on {current_url} — re-authenticating")
+                    try:
+                        re_login_ok = await _do_login(context, auth_cfg)
+                        if re_login_ok:
+                            await page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
+                            await page.wait_for_load_state("networkidle", timeout=8000)
+                    except Exception as re_auth_err:
+                        logger.warning(f"[screenshot] Re-auth failed: {re_auth_err}")
+
                 # Hide cookie banners / overlays that block the real UI
                 await page.evaluate("""() => {
                     const selectors = [
@@ -870,7 +887,7 @@ async def crawl_site(
                             .forEach(el => el.style.display = 'none');
                     }
                 }""")
-                await page.wait_for_timeout(3000)
+                await page.wait_for_timeout(2000)
                 await page.screenshot(path=screenshot_path, full_page=True, timeout=15000)
             except Exception:
                 screenshot_path = None

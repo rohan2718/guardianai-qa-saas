@@ -90,26 +90,29 @@ except Exception as e:
 # ── Add missing columns to EXISTING page_results table ────────────────────────
 print("\nPatching page_results columns (if missing)...")
 page_result_patches = [
-    ("js_errors_count",         "INTEGER",   ""),
-    ("broken_links_count",      "INTEGER",   ""),
-    ("load_time",               "FLOAT",     ""),
-    ("ui_summary",              "JSONB",     ""),
-    ("self_healing_suggestion", "TEXT",      ""),
-    ("similar_issue_ref",       "INTEGER",   ""),
-    ("ai_confidence",           "FLOAT",     ""),
+    ("js_errors_count",         "INTEGER",    ""),
+    ("broken_links_count",      "INTEGER",    ""),
+    ("load_time",               "FLOAT",      ""),
+    ("ui_summary",              "JSONB",      ""),
+    ("self_healing_suggestion", "TEXT",       ""),
+    ("similar_issue_ref",       "INTEGER",    ""),
+    ("ai_confidence",           "FLOAT",      ""),
     ("failure_pattern_id",      "VARCHAR(64)", ""),
     ("root_cause_tag",          "VARCHAR(200)", ""),
-    ("checks_executed",         "INTEGER",   ""),
-    ("checks_null",             "INTEGER",   ""),
-    ("confidence_score",        "FLOAT",     ""),
-    ("ui_form_score",           "FLOAT",     ""),
-    ("functional_score",        "FLOAT",     ""),
-    ("security_score",          "FLOAT",     ""),
-    ("accessibility_score",     "FLOAT",     ""),
-    ("performance_score",       "FLOAT",     ""),
+    ("checks_executed",         "INTEGER",    ""),
+    ("checks_null",             "INTEGER",    ""),
+    ("confidence_score",        "FLOAT",      ""),
+    ("ui_form_score",           "FLOAT",      ""),
+    ("functional_score",        "FLOAT",      ""),
+    ("security_score",          "FLOAT",      ""),
+    ("accessibility_score",     "FLOAT",      ""),
+    ("performance_score",       "FLOAT",      ""),
     ("risk_category",           "VARCHAR(50)", ""),
-    ("health_score",            "FLOAT",     ""),
+    ("health_score",            "FLOAT",      ""),
+    # ── Deep QA column (added for deep_qa_engine.py) ──────────────────────
+    ("deep_qa_summary",         "JSONB",      ""),
 ]
+
 for col, dtype, default in page_result_patches:
     try:
         sql = f"ALTER TABLE page_results ADD COLUMN {col} {dtype} {default};"
