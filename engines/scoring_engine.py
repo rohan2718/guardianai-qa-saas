@@ -2,9 +2,54 @@
 engines/scoring_engine.py — GuardianAI Production Refactor
 Key change: compute_functional_score now uses ONLY broken_navigation_links
 for deductions. failed_assets and third_party_failures do NOT affect score.
+
+CHANGE 1: Added _JS_FALSE_POSITIVE_PATTERNS and _filter_meaningful_js_errors()
+          to strip benign/noisy console errors before scoring.
 """
 
 from typing import Optional
+
+# ── CHANGE 1: JS false-positive filter ────────────────────────────────────────
+# Patterns that are known noise: framework verbose messages, deprecation warnings,
+# ResizeObserver, CDN 404s caught by ad-blockers, etc.
+_JS_FALSE_POSITIVE_PATTERNS = [
+    "ResizeObserver loop",
+    "Non-Error promise rejection",
+    "Script error.",
+    "Loading chunk",
+    "ChunkLoadError",
+    "favicon",
+    "No user m",              # DataTables/ASP.NET verbose log prefix
+    "user message",           # Library verbose messaging
+    "Already started",
+    "DataTables warning",
+    "[Deprecation]",
+    "[Violation]",
+    "Slow network",
+    "net::ERR_BLOCKED_BY_CLIENT",   # Ad-blocker false positives
+    "net::ERR_BLOCKED_BY_ORB",
+    "net::ERR_ABORTED",             # User navigated away mid-load
+]
+
+
+def _filter_meaningful_js_errors(js_errors: list) -> list:
+    """
+    Remove known false-positive JS error messages before scoring.
+    Filters:
+      - Messages shorter than 10 chars (noise/empty strings)
+      - Messages matching known benign framework patterns
+    """
+    result = []
+    for err in (js_errors or []):
+        msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+        stripped = msg.strip()
+        if len(stripped) < 10:
+            continue
+        if any(pat.lower() in stripped.lower() for pat in _JS_FALSE_POSITIVE_PATTERNS):
+            continue
+        result.append(err)
+    return result
+
 
 WEIGHTS = {
     "performance":   0.30,
@@ -31,18 +76,23 @@ def compute_functional_score(page_data: dict) -> dict:
     failed_assets (images/fonts/scripts) and third_party_failures are
     informational only and do NOT reduce this score.
 
+    CHANGE 1: js_errors are filtered through _filter_meaningful_js_errors()
+    before counting, eliminating false positives from noisy frameworks.
+
     Deductions:
       - HTTP status errors:        -50 (4xx) to -100 (5xx)
       - Broken nav links:          -7 per link, max -35
-      - JS errors:                 -3 per error, max -20
+      - JS errors (filtered):      -3 per error, max -20
       - Redirect chain > 2:        -3 per extra hop, max -10
     """
     status        = page_data.get("status", 200)
     redirect_chain = page_data.get("redirect_chain_length", 0) or 0
-    js_errors      = page_data.get("js_errors") or []
+    js_errors_raw  = page_data.get("js_errors") or []
+
+    # CHANGE 1: Filter noisy/false-positive JS errors before scoring
+    js_errors = _filter_meaningful_js_errors(js_errors_raw)
 
     # REFACTORED: Use broken_navigation_links ONLY
-    # Falls back to broken_links for backward compatibility during migration
     broken_nav_links = (
         page_data.get("broken_navigation_links") or
         page_data.get("broken_links") or
@@ -74,14 +124,22 @@ def compute_functional_score(page_data: dict) -> dict:
     else:
         breakdown["broken_navigation_links"] = {"count": 0, "deduction": 0}
 
-    # JS console errors
+    # JS console errors (filtered — CHANGE 1)
     js_count = len(js_errors)
     if js_count > 0:
         j_deduct = min(20.0, js_count * 3.0)
         score -= j_deduct
-        breakdown["js_errors"] = {"count": js_count, "deduction": round(j_deduct, 1)}
+        breakdown["js_errors"] = {
+            "count": js_count,
+            "raw_count": len(js_errors_raw),   # for transparency
+            "deduction": round(j_deduct, 1),
+        }
     else:
-        breakdown["js_errors"] = {"count": 0, "deduction": 0}
+        breakdown["js_errors"] = {
+            "count": 0,
+            "raw_count": len(js_errors_raw),
+            "deduction": 0,
+        }
 
     # Redirect chains (instability signal)
     if redirect_chain > 2:
@@ -185,8 +243,7 @@ def compute_page_health_score(
 def compute_site_health_score(page_health_list: list) -> dict:
     """
     Aggregates per-page health breakdowns into a site-level summary.
-    NOW INCLUDES component_averages — required by tasks.py to populate
-    avg_performance_score, avg_accessibility_score, etc. on TestRun.
+    Includes component_averages required by tasks.py.
     """
     _EMPTY = {
         "site_health_score":  None,
@@ -198,11 +255,6 @@ def compute_site_health_score(page_health_list: list) -> dict:
     if not page_health_list:
         return _EMPTY
 
-    # ── Per-component averages ────────────────────────────────────────────────
-    # page_health_list entries are health_breakdown dicts that contain "components"
-    # key from compute_page_health_score(). Structure:
-    #   {"health_score": float, "risk_category": str,
-    #    "components": {"performance": float|None, "accessibility": float|None, ...}}
     component_keys = ["performance", "accessibility", "security", "functional", "ui_form"]
     component_averages: dict = {}
     for key in component_keys:
@@ -213,7 +265,6 @@ def compute_site_health_score(page_health_list: list) -> dict:
         ]
         component_averages[key] = round(sum(vals) / len(vals), 1) if vals else None
 
-    # ── Site health score ─────────────────────────────────────────────────────
     scores = [
         p.get("health_score")
         for p in page_health_list
@@ -242,5 +293,5 @@ def compute_site_health_score(page_health_list: list) -> dict:
         "min_health_score":   min_score,
         "risk_category":      risk_category,
         "page_count":         len(page_health_list),
-        "component_averages": component_averages,   # ← NEW: consumed by tasks.py
+        "component_averages": component_averages,
     }

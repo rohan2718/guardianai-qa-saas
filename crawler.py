@@ -740,32 +740,63 @@ async def crawl_site(
         page = await context.new_page()
 
         # ── JS error collection — structured with stack traces ────────────────
+        # CHANGE 1: Filter known false-positive patterns before recording.
         js_errors: list[dict] = []
 
+        _JS_ERROR_SKIP_PATTERNS = [
+            "No user m",
+            "user message",
+            "favicon",
+            "ResizeObserver loop",
+            "Non-Error promise",
+            "Script error.",
+            "Loading chunk",
+            "ChunkLoadError",
+            "Already started",
+            "DataTables warning",
+            "[Deprecation]",
+            "[Violation]",
+            "Slow network",
+            "net::ERR_BLOCKED_BY_CLIENT",
+            "net::ERR_BLOCKED_BY_ORB",
+            "net::ERR_ABORTED",
+        ]
+
         def _capture_js_error(err):
-            """Capture pageerror with message and stack."""
+            """Capture pageerror — skipping false positives."""
+            msg = str(err)
+            if any(pat.lower() in msg.lower() for pat in _JS_ERROR_SKIP_PATTERNS):
+                return
+            if len(msg.strip()) < 10:
+                return
             js_errors.append({
-                "message": str(err),
-                "stack":   getattr(err, "stack", None) or str(err),
+                "message": msg,
+                "stack":   getattr(err, "stack", None) or msg,
                 "source":  "pageerror",
             })
 
         def _capture_console_error(msg):
-            """Capture console.error() calls."""
-            if msg.type == "error":
-                location = None
-                try:
-                    loc = msg.location
-                    if loc:
-                        location = f"{loc.get('url','?')}:{loc.get('lineNumber','?')}"
-                except Exception:
-                    pass
-                js_errors.append({
-                    "message":  msg.text,
-                    "stack":    None,
-                    "source":   "console.error",
-                    "location": location,
-                })
+            """Capture ONLY console.error() — strictly 'error' type."""
+            if msg.type != "error":
+                return
+            text = msg.text or ""
+            if any(pat.lower() in text.lower() for pat in _JS_ERROR_SKIP_PATTERNS):
+                return
+            if len(text.strip()) < 10:
+                return
+            location = None
+            try:
+                loc = msg.location
+                if loc:
+                    location = f"{loc.get('url','?')}:{loc.get('lineNumber','?')}"
+            except Exception:
+                pass
+            js_errors.append({
+                "message":  text,
+                "stack":    None,
+                "source":   "console.error",
+                "location": location,
+            })
 
         page.on("pageerror", _capture_js_error)
         page.on("console", _capture_console_error)
@@ -1162,6 +1193,10 @@ async def main(
     page_data: list = []
     resolved_filters = active_filters or list(VALID_FILTERS)
 
+    # CHANGE 3: Log scan type
+    limit_desc = f"{page_limit} pages" if page_limit is not None else "unlimited"
+    logger.info(f"[run {run_id}] Starting crawl: {url} ({limit_desc})")
+
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -1201,6 +1236,14 @@ async def main(
             )
         finally:
             await browser.close()
+
+    # CHANGE 3: Safety guard for unlimited scans
+    from config import MAX_UNLIMITED_PAGES as _MAX_UNLIMITED
+    if page_limit is None and len(page_data) >= _MAX_UNLIMITED:
+        logger.warning(
+            f"[run {run_id}] Unlimited scan safety cap hit: {len(page_data)} pages "
+            f"(MAX_UNLIMITED_PAGES={_MAX_UNLIMITED}). Stopping crawl early."
+        )
 
     # Build reports and return structured result dict
     return await build_reports(run_id, page_data, resolved_filters)

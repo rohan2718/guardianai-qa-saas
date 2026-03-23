@@ -319,6 +319,7 @@ def _persist_deep_qa_results(run_id: int, results: list) -> None:
                             "js_errors_on_load": data.get("js_errors_on_load", []),
                             "broken_images":     data.get("broken_images", []),
                             "performance":       data.get("performance", {}),
+                            "spell_check":       data.get("spell_check", {}),
                         }
                         pr.ui_summary = new_summary
                         flag_modified(pr, "ui_summary")  # force SQLAlchemy to include in UPDATE

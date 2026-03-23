@@ -2204,17 +2204,27 @@
                   />
                 </div>
                 <div class="input-group">
-                  <span class="input-icon"
-                    ><i class="fa-solid fa-layer-group"></i
-                  ></span>
-                  <input
-                    type="number"
-                    name="page_limit"
-                    class="url-input"
-                    placeholder="Max pages to scan (default: plan limit)"
-                    min="1"
-                  />
-                </div>
+  <span class="input-icon"><i class="fa-solid fa-layer-group"></i></span>
+  <input
+    type="number"
+    name="page_limit"
+    class="url-input"
+    id="pageLimitInput"
+    placeholder="{% if plan in ('pro', 'enterprise') %}Max pages (leave blank = unlimited){% else %}Max pages (free plan: up to 50){% endif %}"
+    min="1"
+    {% if plan == 'free' %}max="50"{% endif %}
+  />
+</div>
+{% if plan in ('pro', 'enterprise') %}
+<div style="display:flex;align-items:center;gap:6px;padding:0 10px 10px;font-size:11px;color:#10b981;font-weight:600;">
+  <i class="fa-solid fa-infinity" style="font-size:10px;"></i>
+  <span>{{ plan|capitalize }} plan: unlimited page scanning — leave blank to crawl entire site</span>
+</div>
+{% else %}
+<div style="padding:0 10px 10px;font-size:11px;color:var(--text-muted);">
+  Free plan: up to 50 pages per scan.
+</div>
+{% endif %}
 
                 <div class="filter-section">
                   <div
@@ -5876,96 +5886,113 @@
 
         const PER_PAGE = 25;
         let currentPage = 1;
-        let visibleItems = [];
+        // activeRisk tracks which risk filter is currently applied
+        let activeRisk = "all";
 
-        function getItems() {
+        // getAllItems: returns every page-row regardless of visibility
+        function getAllItems() {
           return Array.from(container.querySelectorAll("[data-page-item]"));
         }
 
-        function refreshPagination() {
-          const items = getItems();
-          // Filter by currently visible (respecting risk filter)
-          visibleItems = items.filter((el) => el.style.display !== "none");
+        // getFilteredItems: returns only items matching the current risk filter
+        // Uses data-risk attribute — does NOT rely on display style
+        function getFilteredItems() {
+          return getAllItems().filter(function(el) {
+            return activeRisk === "all" || el.dataset.risk === activeRisk;
+          });
+        }
 
-          const totalPages = Math.ceil(visibleItems.length / PER_PAGE);
-          currentPage = Math.min(currentPage, Math.max(1, totalPages));
+        function renderPage() {
+          const filtered   = getFilteredItems();
+          const allItems   = getAllItems();
+          const totalItems = filtered.length;
+          const totalPgs   = Math.max(1, Math.ceil(totalItems / PER_PAGE));
 
-          // Show/hide items
-          visibleItems.forEach((el, i) => {
-            const page = Math.floor(i / PER_PAGE) + 1;
-            el.style.display = page === currentPage ? "block" : "none";
+          // Clamp currentPage
+          if (currentPage > totalPgs) currentPage = totalPgs;
+          if (currentPage < 1)        currentPage = 1;
+
+          const startIdx = (currentPage - 1) * PER_PAGE;
+          const endIdx   = startIdx + PER_PAGE;
+
+          // Build a Set of items visible on this page for O(1) lookup
+          const visibleSet = new Set(filtered.slice(startIdx, endIdx));
+
+          // Show/hide ALL items — filtered-out items always hidden,
+          // filtered-in items shown only if on current page
+          allItems.forEach(function(el) {
+            const inFilter = activeRisk === "all" || el.dataset.risk === activeRisk;
+            el.style.display = (inFilter && visibleSet.has(el)) ? "block" : "none";
           });
 
-          const paginationBar = document.getElementById(
-            "pageResultsPagination",
-          );
-          const pgInfo = document.getElementById("pgInfo");
-          const pgBtns = document.getElementById("pgBtns");
+          // Pagination bar
+          const paginationBar = document.getElementById("pageResultsPagination");
+          const pgInfo        = document.getElementById("pgInfo");
+          const pgBtns        = document.getElementById("pgBtns");
+          if (!paginationBar || !pgInfo || !pgBtns) return;
 
-          if (visibleItems.length <= PER_PAGE) {
+          if (totalItems <= PER_PAGE) {
             paginationBar.style.display = "none";
-            // Show all
-            visibleItems.forEach((el) => (el.style.display = "block"));
             return;
           }
 
           paginationBar.style.display = "flex";
-          const start = (currentPage - 1) * PER_PAGE + 1;
-          const end = Math.min(currentPage * PER_PAGE, visibleItems.length);
-          pgInfo.textContent = `Showing ${start}–${end} of ${visibleItems.length} pages`;
+          const displayStart = startIdx + 1;
+          const displayEnd   = Math.min(endIdx, totalItems);
+          pgInfo.textContent = `Showing ${displayStart}–${displayEnd} of ${totalItems} pages`;
 
-          // Build page buttons
+          // Build buttons
           pgBtns.innerHTML = "";
+
+          // Prev button
           const prevBtn = document.createElement("button");
           prevBtn.className = "pg-btn";
           prevBtn.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
           prevBtn.disabled = currentPage === 1;
-          prevBtn.addEventListener("click", () => {
+          prevBtn.addEventListener("click", function() {
             currentPage--;
-            refreshPagination();
+            renderPage();
             scrollToResults();
           });
           pgBtns.appendChild(prevBtn);
 
-          // Page numbers (show up to 7 pages centered around current)
-          const range = [];
-          for (let p = 1; p <= totalPages; p++) {
-            if (
-              p === 1 ||
-              p === totalPages ||
-              (p >= currentPage - 2 && p <= currentPage + 2)
-            ) {
-              range.push(p);
-            }
+          // Smart page number range: always show 1, last, and window around current
+          const range = new Set();
+          range.add(1);
+          range.add(totalPgs);
+          for (let p = Math.max(1, currentPage - 2); p <= Math.min(totalPgs, currentPage + 2); p++) {
+            range.add(p);
           }
-          let last = 0;
-          range.forEach((p) => {
-            if (last && p - last > 1) {
+          const sortedRange = Array.from(range).sort(function(a,b){ return a-b; });
+
+          let lastRendered = 0;
+          sortedRange.forEach(function(p) {
+            if (lastRendered && p - lastRendered > 1) {
               const ellipsis = document.createElement("span");
               ellipsis.textContent = "…";
-              ellipsis.style.cssText =
-                "padding: 0 4px; color: #94a3b8; font-size:12px; display:flex; align-items:center;";
+              ellipsis.style.cssText = "padding:0 6px;color:#94a3b8;font-size:13px;display:inline-flex;align-items:center;";
               pgBtns.appendChild(ellipsis);
             }
             const btn = document.createElement("button");
             btn.className = "pg-btn" + (p === currentPage ? " active" : "");
             btn.textContent = p;
-            btn.addEventListener("click", () => {
+            btn.addEventListener("click", function() {
               currentPage = p;
-              refreshPagination();
+              renderPage();
               scrollToResults();
             });
             pgBtns.appendChild(btn);
-            last = p;
+            lastRendered = p;
           });
 
+          // Next button
           const nextBtn = document.createElement("button");
           nextBtn.className = "pg-btn";
           nextBtn.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
-          nextBtn.disabled = currentPage === totalPages;
-          nextBtn.addEventListener("click", () => {
+          nextBtn.disabled = currentPage === totalPgs;
+          nextBtn.addEventListener("click", function() {
             currentPage++;
-            refreshPagination();
+            renderPage();
             scrollToResults();
           });
           pgBtns.appendChild(nextBtn);
@@ -5976,16 +6003,24 @@
           if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
         }
 
-        // Hook into existing filterPages function
+        // Override filterPages so it resets page and uses our state properly
         const origFilter = window.filterPages;
-        window.filterPages = function (risk, btn) {
-          if (origFilter) origFilter(risk, btn);
+        window.filterPages = function(risk, btn) {
+          // Update active risk filter state
+          activeRisk = risk;
           currentPage = 1;
-          setTimeout(refreshPagination, 10);
+          // Update filter button styles (same as original)
+          document.querySelectorAll(".pf-btn").forEach(function(b) {
+            b.classList.remove("active");
+          });
+          if (btn) btn.classList.add("active");
+          // Render — do NOT call origFilter as it modifies display styles
+          // and would conflict with our renderPage logic
+          renderPage();
         };
 
-        // Initialize
-        refreshPagination();
+        // Initialize on DOM ready
+        renderPage();
       })();
     </script>
     <script id="ui-tab-script">
@@ -6767,6 +6802,109 @@
               <div class="dqa-subsection-body collapsed">${items}</div>
             </div>`;
         }
+                function _renderSpellCheck(spellData) {
+          if (!spellData || Object.keys(spellData).length === 0) return "";
+ 
+          // Not configured / skipped
+          if (spellData.skipped) {
+            return `
+              <div class="dqa-subsection">
+                <div class="dqa-subsection-header">
+                  <i class="fa-solid fa-spell-check" style="color:#94a3b8;"></i>
+                  <span style="color:#94a3b8;">SPELL CHECK</span>
+                  <span class="dqa-count-badge">N/A</span>
+                </div>
+                <div style="padding:8px 14px;font-size:12px;color:#94a3b8;font-style:italic;">
+                  <i class="fa-solid fa-circle-info" style="margin-right:5px;"></i>
+                  ${_esc(spellData.reason || "Spell check not available")}
+                </div>
+              </div>`;
+          }
+ 
+          const total  = spellData.total || 0;
+          const grade  = spellData.grade || "Good";
+          const errors = spellData.errors || [];
+ 
+          const gradeColor = grade === "Good" ? "#10b981"
+                           : grade === "Needs Review" ? "#f59e0b"
+                           : "#ef4444";
+          const gradeBg    = grade === "Good" ? "rgba(16,185,129,0.1)"
+                           : grade === "Needs Review" ? "rgba(245,158,11,0.1)"
+                           : "rgba(239,68,68,0.1)";
+          const gradeIcon  = grade === "Good" ? "fa-circle-check"
+                           : grade === "Needs Review" ? "fa-triangle-exclamation"
+                           : "fa-circle-xmark";
+ 
+          // Clean bill of health
+          if (total === 0) {
+            return `
+              <div class="dqa-subsection">
+                <div class="dqa-subsection-header">
+                  <i class="fa-solid fa-spell-check" style="color:#10b981;"></i>
+                  <span>SPELL CHECK <span class="dqa-count-badge">0 errors</span></span>
+                  <span style="font-size:11px;color:#10b981;font-weight:600;">
+                    <i class="fa-solid fa-check"></i> No spelling errors detected
+                  </span>
+                </div>
+              </div>`;
+          }
+ 
+          // Error table
+          const rows = errors.slice(0, 20).map(e => `
+            <tr style="border-bottom:1px solid #f1f5f9;">
+              <td style="padding:7px 12px;font-weight:700;color:#ef4444;
+                         font-family:'JetBrains Mono',monospace;white-space:nowrap;">
+                ${_esc(e.wrong || "—")}
+              </td>
+              <td style="padding:7px 12px;font-weight:700;color:#10b981;
+                         font-family:'JetBrains Mono',monospace;white-space:nowrap;">
+                ${_esc(e.correct || "—")}
+              </td>
+              <td style="padding:7px 12px;font-size:11px;color:var(--text-muted);
+                         max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                  title="${_esc(e.context || "")}">
+                ${_esc(_t(e.context || "—", 60))}
+              </td>
+            </tr>`).join("");
+ 
+          const moreNote = errors.length > 20
+            ? `<div style="padding:6px 14px;font-size:11px;color:var(--text-muted);">
+                 ... and ${errors.length - 20} more errors not shown
+               </div>`
+            : "";
+ 
+          return `
+            <div class="dqa-subsection">
+              <div class="dqa-subsection-header" onclick="this.nextElementSibling.classList.toggle('collapsed')">
+                <i class="fa-solid fa-spell-check" style="color:${gradeColor};"></i>
+                <span>SPELL CHECK
+                  <span class="dqa-count-badge">${total} error${total !== 1 ? "s" : ""}</span>
+                </span>
+                <span style="display:inline-flex;align-items:center;gap:5px;padding:2px 9px;
+                       border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;
+                       background:${gradeBg};color:${gradeColor};border:1px solid ${gradeColor}44;">
+                  <i class="fa-solid ${gradeIcon}"></i>${_esc(grade)}
+                </span>
+                <i class="fa-solid fa-chevron-down" style="margin-left:auto;font-size:10px;color:#94a3b8;"></i>
+              </div>
+              <div class="dqa-subsection-body">
+                <table style="width:100%;border-collapse:collapse;">
+                  <thead>
+                    <tr style="background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;
+                                 color:#64748b;text-align:left;font-weight:700;">Misspelled</th>
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;
+                                 color:#64748b;text-align:left;font-weight:700;">Correction</th>
+                      <th style="padding:7px 12px;font-size:10px;text-transform:uppercase;
+                                 color:#64748b;text-align:left;font-weight:700;">Context</th>
+                    </tr>
+                  </thead>
+                  <tbody>${rows}</tbody>
+                </table>
+                ${moreNote}
+              </div>
+            </div>`;
+        }
 
         // ── Bugs Summary ───────────────────────────────────────────────────────
         function _renderBugs(bugs) {
@@ -6860,6 +6998,7 @@
             _renderLinks(links) +
             _renderTables(tables) +
             _renderJSErrors(jsErrs) +
+            _renderSpellCheck(dqa.spell_check || {}) +
             _renderBugs(bugs);
         };
 

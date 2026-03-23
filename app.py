@@ -788,11 +788,17 @@ def home():
             ctx = _empty_ctx(error=f"Invalid URL: {reason}")
             return render_template("index.html", **ctx)
 
-        # ── Resolve page_limit safely ───────────────────────────────────────
+        # ── Resolve page_limit safely — CHANGE 3 ────────────────────────────
         try:
-            page_limit = int(request.form.get("page_limit") or current_user.page_limit_default)
+            raw_limit = (request.form.get("page_limit") or "").strip()
+            if not raw_limit:
+                page_limit = None  # Unlimited
+            else:
+                page_limit = int(raw_limit)
+                if page_limit < 1:
+                    page_limit = None
         except (TypeError, ValueError):
-            page_limit = int(current_user.page_limit_default)
+            page_limit = None
 
         # ── Filters ─────────────────────────────────────────────────────────
         selected_filters = request.form.getlist("scan_filters")
@@ -812,8 +818,20 @@ def home():
             return render_template("index.html", **ctx)
 
         page_cap = limits.get("pages_per_scan")
+
+        # CHANGE 3: Free plan capped, pro/enterprise unlimited
         if page_cap is not None:
-            page_limit = min(page_limit, page_cap)
+            if page_limit is None:
+                page_limit = page_cap
+            else:
+                page_limit = min(page_limit, page_cap)
+
+        if page_limit is None:
+            from config import MAX_UNLIMITED_PAGES
+            logger.info(
+                f"[run] {current_user.username} starting unlimited scan of {url} "
+                f"(safety cap: {MAX_UNLIMITED_PAGES} pages)"
+            )
 
         # ── Concurrency guard (MOVE BEFORE DB INSERT) ──────────────────────
         if not _acquire_scan_slot():

@@ -25,6 +25,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, UTC
+from engines.spell_check_engine import run_spell_check
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -244,6 +245,7 @@ class DeepQAPageResult:
 
     js_errors_on_load: list = field(default_factory=list)
     broken_images: list     = field(default_factory=list)
+    spell_check: dict       = field(default_factory=dict)
 
     performance: dict   = field(default_factory=dict)
     accessibility: dict = field(default_factory=dict)
@@ -267,6 +269,7 @@ class DeepQAPageResult:
             "modals":            [m.to_dict() if hasattr(m, "to_dict") else m for m in self.modals],
             "js_errors_on_load": self.js_errors_on_load,
             "broken_images":     self.broken_images,
+            "spell_check":       self.spell_check,
             "performance":       self.performance,
             "accessibility":     self.accessibility,
             "security":          self.security,
@@ -278,6 +281,64 @@ class DeepQAPageResult:
 
 
 # ── Main Engine ────────────────────────────────────────────────────────────────
+async def _wait_for_ajax_table_rows(page, tbl: dict) -> dict:
+    """
+    CHANGE 2: Poll up to 5 seconds for AJAX tables to load before marking empty.
+    Handles DataTables.js, DevExtreme, and generic AJAX grids.
+    Sets tbl["confirmed_empty"] = True only after full wait with no rows.
+    """
+    if tbl.get("row_count", 0) > 0:
+        tbl["confirmed_empty"] = False
+        return tbl
+
+    selector = tbl.get("selector", "table")
+    logger.debug(f"[DeepQA] Table '{selector}' has 0 rows — waiting for AJAX (up to 5s)...")
+
+    for attempt in range(10):  # 10 × 500ms = 5 seconds
+        await asyncio.sleep(0.5)
+        try:
+            js_sel = selector.replace("'", "\\'").replace('"', '\\"')
+            row_count = await page.evaluate(f"""() => {{
+                const dxLoad = document.querySelector('.dx-loadpanel-wrapper');
+                if (dxLoad) {{
+                    const st = window.getComputedStyle(dxLoad);
+                    if (st.display !== 'none') return -1;
+                }}
+                const dxRows = document.querySelectorAll('.dx-datagrid-rowsview .dx-data-row');
+                if (dxRows.length > 0) return dxRows.length;
+
+                const proc = document.querySelector('.dataTables_processing');
+                if (proc) {{
+                    const st = window.getComputedStyle(proc);
+                    if (st.display !== 'none') return -1;
+                }}
+
+                try {{
+                    const t = document.querySelector('{js_sel}');
+                    if (!t) return 0;
+                    const rows = t.querySelectorAll(
+                        'tbody tr:not(.dataTables_empty):not(.odd.even)'
+                    );
+                    return rows.length;
+                }} catch(e) {{
+                    return 0;
+                }}
+            }}""")
+
+            if row_count == -1:
+                continue
+            if row_count > 0:
+                logger.debug(f"[DeepQA] Table '{selector}' loaded {row_count} rows after {(attempt+1)*0.5:.1f}s")
+                tbl["row_count"]       = row_count
+                tbl["confirmed_empty"] = False
+                return tbl
+        except Exception:
+            continue
+
+    logger.debug(f"[DeepQA] Table '{selector}' confirmed empty after 5s wait")
+    tbl["confirmed_empty"] = True
+    return tbl
+
 
 class DeepQAEngine:
 
@@ -340,6 +401,64 @@ class DeepQAEngine:
                 qa_score=0.0,
             )
 
+        # ── Login redirect detection — re-authenticate if session expired ──────
+        # If the page redirected to login silently, DOM will show login elements
+        # instead of the real page. Detect this and re-login before scanning.
+        _LOGIN_INDICATORS = ["login", "signin", "sign-in", "account/login", "user/login"]
+        _current_url_lower = page.url.lower()
+        _redirected_to_login = any(ind in _current_url_lower for ind in _LOGIN_INDICATORS)
+
+        if not _redirected_to_login:
+            # Also check DOM title / h1 as fallback (some apps don't change URL)
+            try:
+                _page_text_check = await page.evaluate("""() => {
+                    const title = (document.title || '').toLowerCase();
+                    const h1 = (document.querySelector('h1,h2') || {}).textContent || '';
+                    const body = document.body ? document.body.className.toLowerCase() : '';
+                    return title + ' ' + h1.toLowerCase() + ' ' + body;
+                }""")
+                if any(ind in _page_text_check for ind in ["sign in", "log in", "login page", "please login"]):
+                    _redirected_to_login = True
+            except Exception:
+                pass
+
+        if _redirected_to_login:
+            logger.warning(f"[DeepQA] Session expired — page redirected to login for {url}. Re-authenticating...")
+            try:
+                from crawler import _read_auth_config, _do_login
+                _auth = _read_auth_config()
+                if _auth:
+                    _login_ok = await _do_login(self.context, _auth)
+                    if _login_ok:
+                        logger.info(f"[DeepQA] Re-auth succeeded — retrying {url}")
+                        await page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=6000)
+                        except Exception:
+                            pass
+                        # Verify we're no longer on login page
+                        if any(ind in page.url.lower() for ind in _LOGIN_INDICATORS):
+                            logger.error(f"[DeepQA] Still on login after re-auth — skipping {url}")
+                            await page.close()
+                            return DeepQAPageResult(
+                                page_url=url,
+                                page_title="Session Error",
+                                tested_at=datetime.now(UTC).isoformat(),
+                                load_time_ms=(time.time() - t_start) * 1000,
+                                summary={
+                                    "total_buttons": 0, "buttons_passed": 0, "buttons_failed": 0,
+                                    "total_forms": 0, "forms_passed": 0, "forms_failed": 0,
+                                    "total_links": 0, "links_broken": 0,
+                                    "total_tables": 0, "tables_passed": 0,
+                                    "js_errors_on_load": 0,
+                                },
+                                qa_score=0.0,
+                            )
+                    else:
+                        logger.error(f"[DeepQA] Re-auth failed — cannot test {url}")
+            except Exception as reauth_err:
+                logger.error(f"[DeepQA] Re-auth error: {reauth_err}")
+
         page_title = await page.title()
         load_ms    = (time.time() - t_start) * 1000
 
@@ -358,6 +477,7 @@ class DeepQAEngine:
         a11y         = await self._collect_accessibility(page)
         security     = await self._collect_security(page, url)
         broken_imgs  = await self._collect_broken_images(page)
+        spell_result = await run_spell_check(page, url)
 
         result = DeepQAPageResult(
             page_url=url,
@@ -375,6 +495,7 @@ class DeepQAEngine:
             accessibility=a11y,
             security=security,
             screenshot_path=page_screenshot,
+            spell_check=spell_result,
         )
 
         result.qa_score = self._compute_qa_score(result)
@@ -1134,43 +1255,65 @@ class DeepQAEngine:
     # ── 4. TABLES ──────────────────────────────────────────────────────────────
 
     async def _test_tables(self, page) -> list:
+        """
+        CHANGE 2: Adds intelligent wait-and-recheck for AJAX-loaded tables.
+        """
         results = []
         try:
             tables_data = await page.evaluate("""() => {
                 const tables = [];
                 const seenSels = new Set();
 
-                // Standard HTML tables
-                document.querySelectorAll('table').forEach((t, i) => {
-                    const rows = t.querySelectorAll('tbody tr');
+                document.querySelectorAll('table, .dataTables_wrapper table').forEach((t, i) => {
+                    if (seenSels.has(t)) return;
+                    seenSels.add(t);
+                    const rows = t.querySelectorAll('tbody tr:not(.dataTables_empty)');
                     let sel = t.id ? '#' + t.id : 'table:nth-of-type(' + (i+1) + ')';
-                    seenSels.add(sel);
-
-                    // Find pagination near the table
-                    const parent = t.parentElement || document;
-                    const paginationEl = parent.querySelector(
-                        '[aria-label*="paginat"], .pagination, [class*="paginat"], .page-nav'
+                    const wrapper = t.closest('.dataTables_wrapper') || t.parentElement || document;
+                    const paginationEl = wrapper.querySelector(
+                        '[aria-label*="paginat"], .pagination, [class*="paginat"], .dataTables_paginate'
                     );
-
-                    // Find sortable headers
                     const sortableHeaders = t.querySelectorAll(
-                        'th[class*="sort"], th[data-sort], th[data-sortable], th[class*="sortable"]'
+                        'th.sorting, th.sorting_asc, th.sorting_desc, th[data-sort], th[data-sortable]'
                     );
-
-                    // Find search near the table
-                    const searchEl = parent.querySelector(
-                        'input[type="search"], input[placeholder*="search" i], input[placeholder*="filter" i]'
+                    const searchEl = (t.closest('.dataTables_wrapper') || wrapper).querySelector(
+                        '.dataTables_filter input, input[type="search"], input[placeholder*="search" i]'
                     );
-
+                    const isDataTables = t.classList.contains('dataTable') || !!t.closest('.dataTables_wrapper');
+                    const processingEl = t.closest('.dataTables_wrapper')
+                        ? t.closest('.dataTables_wrapper').querySelector('.dataTables_processing')
+                        : null;
                     tables.push({
-                        selector:       sel,
-                        row_count:      rows.length,
-                        has_pagination: !!paginationEl,
-                        pagination_sel: paginationEl ? (paginationEl.id ? '#'+paginationEl.id : '.pagination') : null,
-                        has_sorting:    sortableHeaders.length > 0,
-                        sort_sel:       sortableHeaders.length > 0 ? 'th[class*="sort"]' : null,
-                        has_search:     !!searchEl,
-                        search_sel:     searchEl ? (searchEl.id ? '#'+searchEl.id : 'input[type="search"]') : null,
+                        selector:        sel,
+                        row_count:       rows.length,
+                        has_pagination:  !!paginationEl,
+                        pagination_sel:  paginationEl ? (paginationEl.id ? '#'+paginationEl.id : '.dataTables_paginate,.pagination') : null,
+                        has_sorting:     sortableHeaders.length > 0,
+                        sort_sel:        sortableHeaders.length > 0 ? 'th.sorting,th[class*="sort"]' : null,
+                        has_search:      !!searchEl,
+                        search_sel:      searchEl ? (searchEl.id ? '#'+searchEl.id : '.dataTables_filter input') : null,
+                        is_datatables:   isDataTables,
+                        is_processing:   processingEl ? processingEl.style.display !== 'none' : false,
+                        confirmed_empty: false,
+                    });
+                });
+
+                document.querySelectorAll('.dx-datagrid').forEach((grid, i) => {
+                    const rows = grid.querySelectorAll('.dx-datagrid-rowsview .dx-data-row');
+                    let sel = grid.id ? '#' + grid.id : '.dx-datagrid:nth-of-type(' + (i+1) + ')';
+                    tables.push({
+                        selector:        sel,
+                        row_count:       rows.length,
+                        has_pagination:  !!grid.querySelector('.dx-pages'),
+                        pagination_sel:  '.dx-pages',
+                        has_sorting:     true,
+                        sort_sel:        '.dx-header-row td',
+                        has_search:      !!grid.querySelector('.dx-searchbox'),
+                        search_sel:      '.dx-searchbox input',
+                        is_datatables:   false,
+                        is_devextreme:   true,
+                        is_processing:   !!grid.querySelector('.dx-loadpanel-wrapper'),
+                        confirmed_empty: false,
                     });
                 });
 
@@ -1182,6 +1325,7 @@ class DeepQAEngine:
 
         for tbl in tables_data[:MAX_TABLES_PER_PAGE]:
             try:
+                tbl = await _wait_for_ajax_table_rows(page, tbl)
                 result = await self._test_single_table(page, tbl)
                 results.append(result)
             except Exception as e:
@@ -1668,18 +1812,29 @@ class DeepQAEngine:
             })
 
         # Empty tables
+        # CHANGE 2: Only flag empty tables after confirmed AJAX wait
         for tbl in result.tables:
-            if tbl.row_count == 0:
+            tbl_dict = tbl.to_dict() if hasattr(tbl, "to_dict") else tbl
+            row_count       = tbl_dict.get("row_count", 1)
+            confirmed_empty = tbl_dict.get("confirmed_empty", False)
+            if row_count == 0 and confirmed_empty:
                 bugs.append({
-                    "title":       f"Empty Data Table: {tbl.selector}",
-                    "bug_type":    "functional",
-                    "severity":    "medium",
-                    "description": f"Table {tbl.selector} on {result.page_url} has no rows.",
-                    "impact":      "Users see empty data tables, which may indicate a data loading failure.",
-                    "steps":       [f"Navigate to {result.page_url}", f"Observe table {tbl.selector}"],
-                    "expected":    "Table displays data rows",
-                    "actual":      "Table is empty (0 rows)",
-                    "fix":         "Check API calls that populate this table. Verify backend data and filters.",
+                    "title":    f"Empty Data Table (Confirmed): {tbl_dict['selector']}",
+                    "bug_type": "functional",
+                    "severity": "medium",
+                    "description": (
+                        f"Table {tbl_dict['selector']} on {result.page_url} has no rows "
+                        f"even after waiting 5 seconds for AJAX data to load."
+                    ),
+                    "impact":   "Users see empty data tables indicating an API failure.",
+                    "steps":    [
+                        f"Navigate to {result.page_url}",
+                        f"Observe table {tbl_dict['selector']}",
+                        "Wait 5+ seconds — table remains empty",
+                    ],
+                    "expected": "Table displays data rows within 5 seconds of page load",
+                    "actual":   "Table is empty (0 rows) after confirmed AJAX wait",
+                    "fix":      "Check API calls that populate this table. Verify backend data and AJAX endpoints.",
                     "screenshot_path": None,
                 })
 
@@ -1718,6 +1873,30 @@ class DeepQAEngine:
                 "actual":      f"{len(result.js_errors_on_load)} errors on page load",
                 "fix":         "Fix all JS errors. Common causes: undefined variables, missing dependencies, syntax errors.",
                 "screenshot_path": result.screenshot_path,
+            })
+            # CHANGE 4: Spell check bugs
+        spell = getattr(result, "spell_check", {}) or {}
+        if (
+            not spell.get("skipped")
+            and spell.get("total", 0) >= 3
+            and spell.get("grade") == "Poor"
+        ):
+            error_list = spell.get("errors", [])[:5]
+            examples = "\n".join(
+                f"  - '{e.get('wrong','?')}' -> '{e.get('correct','?')}' (context: {e.get('context','')})"
+                for e in error_list
+            )
+            bugs.append({
+                "title":    f"Spelling Errors Detected ({spell['total']} issues)",
+                "bug_type": "functional",
+                "severity": "low",
+                "description": f"Spell check found {spell['total']} errors.\n\n{examples}",
+                "impact":    "Spelling errors reduce user trust and professionalism.",
+                "steps":     [f"Open {result.page_url}", "Review visible page text"],
+                "expected":  "All visible text is correctly spelled",
+                "actual":    f"{spell['total']} errors found (grade: {spell.get('grade','Poor')})",
+                "fix":       "Correct identified spelling errors in the application source.",
+                "screenshot_path": None,
             })
 
         return bugs
@@ -1771,6 +1950,7 @@ class DeepQAEngine:
             "js_errors_on_load": len(result.js_errors_on_load),
             "broken_images":   len(result.broken_images),
             "total_bugs":      len(result.bugs),
+            "spell_errors":    len((getattr(result, "spell_check", {}) or {}).get("errors", [])),
             "qa_score":        result.qa_score,
         }
 

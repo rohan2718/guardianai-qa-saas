@@ -9,17 +9,18 @@ Bug Report Generator: two modes of operation:
    into structured bug reports with reproduction steps and Playwright snippets.
 
 KEY CHANGES v2:
-  - Cross-page deduplication: identical rule hits across pages are merged into
-    a single bug report with an "affected_pages" list. Eliminates the repeated
-    "Page Served Over HTTP" bug per page pattern.
-  - JS error reports now include message + stack trace + source location
-    (sourced from the enriched js_errors[] dict format from crawler v2).
-  - Accessibility reports list the specific violation categories found
-    (missing alt, unlabeled inputs, empty links, etc.).
-  - Security reports include the full list of affected URLs in description
-    when the same issue spans multiple pages.
+  - Cross-page deduplication: identical rule hits across pages are merged.
+  - JS error reports include message + stack trace + source location.
+  - Accessibility reports list the specific violation categories found.
+  - Security reports include all affected URLs in description.
   - _make_sitewide_title() rewrites per-page titles to site-level titles.
   - Bug fingerprinting uses rule_id + severity for stable cross-page grouping.
+
+CHANGE 1:
+  - Expanded _CDN_HOSTS to cover DataTables, jQuery, ASP.NET, Font Awesome,
+    analytics scripts, and other common third-party libraries.
+  - js_errors scan rule now requires >= 2 filtered errors (was 1) to fire,
+    reducing false positives from single benign framework messages.
 """
 
 from __future__ import annotations
@@ -40,8 +41,8 @@ logger = logging.getLogger(__name__)
 class BugReport:
     bug_title: str
     page_url: str
-    bug_type: str              # performance|security|accessibility|functional|interaction|navigation
-    severity: str              # critical|high|medium|low
+    bug_type: str
+    severity: str
     component: Optional[str]
     description: str
     impact: str
@@ -55,7 +56,6 @@ class BugReport:
     flow_id: Optional[str] = None
     run_id: Optional[int] = None
     playwright_snippet: Optional[str] = None
-    # v2: list of all affected page URLs (populated by deduplication pass)
     affected_pages: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -87,10 +87,40 @@ def _path(url: str) -> str:
     return urlparse(url).path or "/"
 
 
+# CHANGE 1: Expanded CDN host list to cover common enterprise/framework scripts
+# that should never count as meaningful JS errors.
 _CDN_HOSTS = [
-    "cdn.jsdelivr.net", "cdnjs.cloudflare.com", "googleapis.com",
-    "gstatic.com", "unpkg.com", "ajax.googleapis.com",
+    # Original entries
+    "cdn.jsdelivr.net",
+    "cdnjs.cloudflare.com",
+    "googleapis.com",
+    "gstatic.com",
+    "unpkg.com",
+    "ajax.googleapis.com",
+    # CHANGE 1 additions
+    "datatables.net",
+    "cdn.datatables.net",
+    "jquery.com",
+    "code.jquery.com",
+    "bootstrapcdn.com",
+    "maxcdn.bootstrapcdn.com",
+    "ajax.aspnetcdn.com",
+    "aspnet.ajax.cdn.azure.net",
+    "microsoft.com",
+    "msecnd.net",
+    "fontawesome.com",
+    "use.fontawesome.com",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "hotjar.com",
+    "clarity.ms",
+    "intercom.io",
+    "segment.com",
+    "mixpanel.com",
+    "amplitude.com",
+    "heap.io",
 ]
+
 
 def _non_cdn_js_errors(js_errors: list) -> list:
     """Returns only JS errors that are not external CDN 404s."""
@@ -105,13 +135,10 @@ def _non_cdn_js_errors(js_errors: list) -> list:
 def _js_error_summary(js_errors: list) -> str:
     """
     Formats JS errors for bug description.
-    Handles both legacy string format and v2 dict format
-    {message, stack, source, location}.
-    Filters out external CDN 404s — not actionable by the site owner.
+    Handles both legacy string format and v2 dict format.
+    Filters out external CDN 404s.
     """
-    # Filter out external CDN 404s
     filtered = _non_cdn_js_errors(js_errors)
-    # Use filtered list if it has items, otherwise keep all (avoid empty report)
     if filtered:
         js_errors = filtered
 
@@ -130,13 +157,11 @@ def _js_error_summary(js_errors: list) -> str:
             if location:
                 line += f"\n     Location: {location}"
             if stack and stack != msg:
-                # Show first 2 lines of stack trace
                 stack_lines = [s.strip() for s in stack.split("\n") if s.strip()][:2]
                 if stack_lines:
                     line += "\n     Stack: " + " | ".join(stack_lines)
             lines.append(line)
         else:
-            # Legacy: plain string
             lines.append(f"  {i}. {str(err)[:200]}")
 
     if len(js_errors) > 5:
@@ -146,10 +171,7 @@ def _js_error_summary(js_errors: list) -> str:
 
 
 def _a11y_violation_summary(a11y_data: dict) -> str:
-    """
-    Formats accessibility violation details from the accessibility engine output.
-    Groups violations by category and reports counts.
-    """
+    """Formats accessibility violation details from the accessibility engine output."""
     if not a11y_data:
         return "Accessibility data not available."
 
@@ -158,7 +180,6 @@ def _a11y_violation_summary(a11y_data: dict) -> str:
         total = a11y_data.get("total_issues", 0)
         return f"{total} accessibility violations detected (run axe DevTools for details)."
 
-    # Group by category
     by_category: dict[str, list] = defaultdict(list)
     for issue in issues:
         cat = issue.get("category", "unknown")
@@ -180,7 +201,6 @@ def _a11y_violation_summary(a11y_data: dict) -> str:
         label = category_labels.get(cat, cat.replace("_", " ").title())
         sev   = (cat_issues[0].get("severity") or "medium") if cat_issues else "medium"
         lines.append(f"  • [{sev.upper()}] {label}: {len(cat_issues)} instance(s)")
-        # Show first example
         if cat_issues and cat_issues[0].get("element"):
             el = cat_issues[0]["element"][:80]
             lines.append(f"    Example: {el}")
@@ -189,19 +209,6 @@ def _a11y_violation_summary(a11y_data: dict) -> str:
 
 
 # ── Scan Rules ─────────────────────────────────────────────────────────────────
-#
-# Each rule dict:
-#   id         — stable string key, used for deduplication
-#   check      — lambda(page) → bool
-#   severity   — critical|high|medium|low
-#   bug_type   — performance|security|accessibility|functional|navigation
-#   title      — str or lambda(page) → str
-#   description— str or lambda(page) → str
-#   impact     — str
-#   fix        — str
-#   steps      — list[str] or lambda(page) → list[str]
-#   expected   — str
-#   actual     — str or lambda(page) → str
 
 _SCAN_RULES = [
 
@@ -225,7 +232,9 @@ _SCAN_RULES = [
     },
     {
         "id": "js_errors",
-        "check": lambda p: bool(_non_cdn_js_errors(p.get("js_errors") or [])),
+        # CHANGE 1: Threshold raised from 1 to 2 to reduce false positives
+        # from single benign framework messages (e.g. one DataTables init log).
+        "check": lambda p: len(_non_cdn_js_errors(p.get("js_errors") or [])) >= 2,
         "severity": "medium",
         "bug_type": "functional",
         "title": lambda p: f"JavaScript Errors Detected ({len(_non_cdn_js_errors(p['js_errors']))} error{'s' if len(_non_cdn_js_errors(p['js_errors'])) != 1 else ''}) — {_path(p['url'])}",
@@ -500,10 +509,6 @@ def generate_bugs_from_page(page: dict, run_id: int) -> list[BugReport]:
 # ── Cross-Page Deduplication ───────────────────────────────────────────────────
 
 def _make_sitewide_title(rule_id: str, title: str, count: int) -> str:
-    """
-    Rewrites a per-page bug title into a site-wide issue title.
-    Only applies to rules that naturally repeat across many pages.
-    """
     sitewide_map = {
         "http_no_tls":       f"Application Does Not Enforce HTTPS ({count} pages affected)",
         "missing_meta_desc": f"Missing Meta Descriptions Site-Wide ({count} pages)",
@@ -518,25 +523,10 @@ def _make_sitewide_title(rule_id: str, title: str, count: int) -> str:
 
 
 def _deduplicate_bugs(bugs: list[BugReport]) -> list[BugReport]:
-    """
-    Merges duplicate bug reports across pages.
-
-    Grouping key: rule_id is embedded in bug_title via a stable prefix per rule.
-    We use bug_type + severity + normalised title as the grouping fingerprint.
-
-    For groups with 2+ bugs:
-      - The first (canonical) bug is kept
-      - Its description is updated to list all affected pages
-      - Its title is rewritten to a site-wide form
-      - affected_pages is populated with all URLs
-
-    For unique bugs: returned as-is.
-    """
-    # Build fingerprint → list[BugReport]
+    """Merges duplicate bug reports across pages."""
     groups: dict[str, list[BugReport]] = defaultdict(list)
 
     for bug in bugs:
-        # Normalise title: strip per-page specifics (URLs, counts, ms values)
         norm_title = re.sub(r"https?://\S+", "URL", bug.bug_title)
         norm_title = re.sub(r"\d+ms", "Xms", norm_title)
         norm_title = re.sub(r"\(\d+ error[s]?\)", "(N errors)", norm_title)
@@ -546,14 +536,7 @@ def _deduplicate_bugs(bugs: list[BugReport]) -> list[BugReport]:
         key = f"{bug.bug_type}::{bug.severity}::{norm_title}"
         groups[key].append(bug)
 
-    # Also extract rule_id from each bug for sitewide title lookup
-    # We map norm_title back to rule_id via _SCAN_RULES title patterns
-    rule_id_by_title: dict[str, str] = {}
-    for rule in _SCAN_RULES:
-        rule_id_by_title[rule["id"]] = rule["id"]
-
     def _guess_rule_id(bug: BugReport) -> str:
-        """Match bug back to rule_id by bug_type+severity."""
         for rule in _SCAN_RULES:
             if rule["bug_type"] == bug.bug_type and rule["severity"] == bug.severity:
                 return rule["id"]
@@ -568,27 +551,23 @@ def _deduplicate_bugs(bugs: list[BugReport]) -> list[BugReport]:
             merged.append(b)
             continue
 
-        # Multi-page: merge into canonical (first) bug
         canonical     = group[0]
         affected_urls = list(dict.fromkeys(b.page_url for b in group))
         rule_id       = _guess_rule_id(canonical)
 
-        # Rewrite title to site-wide form
         canonical.bug_title = _make_sitewide_title(
             rule_id, canonical.bug_title, len(affected_urls)
         )
 
-        # Rewrite description to reference all affected pages
         url_list = "\n".join(f"  • {u}" for u in affected_urls[:10])
         more     = f"\n  ... and {len(affected_urls) - 10} more pages" if len(affected_urls) > 10 else ""
         canonical.description = (
-            canonical.description.split("\n\n")[0]  # keep first paragraph
+            canonical.description.split("\n\n")[0]
             + f"\n\n⚠️ This issue affects {len(affected_urls)} pages:\n{url_list}{more}"
         )
 
         canonical.affected_pages = affected_urls
 
-        # Update page_url to the most representative URL (root if present)
         root_urls = [u for u in affected_urls if urlparse(u).path in ("", "/")]
         if root_urls:
             canonical.page_url = root_urls[0]
@@ -601,10 +580,7 @@ def _deduplicate_bugs(bugs: list[BugReport]) -> list[BugReport]:
 # ── Scan-Level Entry Point ─────────────────────────────────────────────────────
 
 def generate_bugs_from_scan(page_data: list[dict], run_id: int) -> list[BugReport]:
-    """
-    Generate and deduplicate bugs from all pages in a scan.
-    Returns deduplicated, severity-sorted bug reports.
-    """
+    """Generate and deduplicate bugs from all pages in a scan."""
     all_bugs: list[BugReport] = []
     for page in page_data:
         all_bugs.extend(generate_bugs_from_page(page, run_id))
@@ -638,10 +614,7 @@ def generate_bugs_from_test_failure(
     validation: dict,
     run_id: int,
 ) -> Optional[BugReport]:
-    """
-    Generates a bug report from a failed test case execution.
-    Returns None if the test passed.
-    """
+    """Generates a bug report from a failed test case execution."""
     if validation.get("verdict") == "pass":
         return None
 
