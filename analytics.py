@@ -41,7 +41,8 @@ def generate_metrics_from_run(run) -> dict:
         PageResult.run_id == run.id,
         PageResult.load_time.isnot(None)
     ).scalar()
-    avg_load = round(avg_load, 2) if avg_load is not None else None
+    # load_time is stored in seconds after crawler.py fix
+    avg_load = round(float(avg_load), 2) if avg_load is not None else None
     slow_pages = run.slow_pages_count or 0
 
     return {

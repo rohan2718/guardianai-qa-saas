@@ -670,7 +670,7 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                     db.session.commit()
 
             # Capture URLs before the outer context closes
-            _deep_qa_page_urls = [p["url"] for p in pages[:20] if p.get("url")]
+            _deep_qa_page_urls = [p["url"] for p in pages if p.get("url")]
 
     except Exception as e:
         logger.error(f"Failed to persist results for run {run_id}: {e}", exc_info=True)

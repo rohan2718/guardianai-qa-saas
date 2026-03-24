@@ -754,12 +754,18 @@ async def crawl_site(
             "ChunkLoadError",
             "Already started",
             "DataTables warning",
+            "DataTables:",
+            "datatables",
             "[Deprecation]",
             "[Violation]",
             "Slow network",
             "net::ERR_BLOCKED_BY_CLIENT",
             "net::ERR_BLOCKED_BY_ORB",
             "net::ERR_ABORTED",
+            "Cannot read properties of undefined",  # DataTables init noise
+            "$ is not defined",                      # jQuery load order noise  
+            "jQuery is not defined",
+            "Uncaught TypeError: Cannot read",
         ]
 
         def _capture_js_error(err):
@@ -893,10 +899,17 @@ async def crawl_site(
                 # ── Guard: if page redirected to login, re-authenticate ──────
                 # This happens when the session expires mid-crawl for some pages.
                 # Re-login and navigate back to the real page before screenshotting.
+                # ── Guard: if page redirected to login, re-authenticate ──────
                 page_url_now = page.url.lower()
                 auth_cfg = _read_auth_config()
                 login_indicators = ["login", "signin", "sign-in", "account/login"]
-                if auth_cfg and any(ind in page_url_now for ind in login_indicators):
+                # Only re-auth if we ended up ON the login page (not just a page with "login" in nav)
+                actually_on_login = any(
+                    page_url_now.rstrip("/").endswith(ind) or 
+                    f"/{ind}" in page_url_now.split("?")[0]
+                    for ind in login_indicators
+                )
+                if auth_cfg and actually_on_login and current_url.lower() not in login_indicators:
                     logger.warning(f"[screenshot] Session lost on {current_url} — re-authenticating")
                     try:
                         re_login_ok = await _do_login(context, auth_cfg)
@@ -983,7 +996,7 @@ async def crawl_site(
                 "performance_metrics": perf_raw,
                 "performance_score":   perf_score_data.get("score"),
                 "performance_grade":   perf_score_data.get("grade"),
-                "load_time":           load_ms,
+                "load_time":           round(load_ms / 1000.0, 3) if load_ms else None,
                 "fcp_ms":  (perf_raw or {}).get("fcp_ms"),
                 "lcp_ms":  (perf_raw or {}).get("lcp_ms"),
                 "ttfb_ms": (perf_raw or {}).get("ttfb_ms"),
@@ -1214,6 +1227,8 @@ async def main(
             login_ok = await _do_login(context, auth)
             if login_ok:
                 logger.info("[auth] Session established — crawling as authenticated user")
+                cookies = await context.cookies()
+                logger.info(f"[auth] Saved {len(cookies)} session cookies to context")
                 success_path = auth.get("success_url", "").strip()
                 if success_path:
                     from urllib.parse import urlparse as _up

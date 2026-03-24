@@ -2764,21 +2764,22 @@
                             1 else '' }}
                           </span>
 
-                          {% set lt = p.get('load_time') %} {% if lt is not none
-                          %} {% if lt < 2 %} {% set lt_bg = '#dcfce7' %}{% set
-                          lt_color = '#166534' %}{% set lt_label = 'Fast' %}
-                          {% elif lt < 5 %} {% set lt_bg = '#fef9c3' %}{% set
-                          lt_color = '#854d0e' %}{% set lt_label = 'Moderate'
-                          %} {% else %} {% set lt_bg = '#fee2e2' %}{% set
-                          lt_color = '#b91c1c' %}{% set lt_label = 'Slow' %}
-                          {% endif %}
-                          <span
-                            class="issue-tag"
-                            title="Total time for this page to fully load. Under 2s is ideal. Over 5s will frustrate users and hurt SEO."
-                            style="background: {{ lt_bg }}; color: {{ lt_color }}"
-                          >
-                            {{ lt_label }} ({{ "%.2f"|format(lt) }}s)
-                          </span>
+                          {% set lt = p.get('load_time') %}
+{% if lt is not none %}
+{% if lt < 2 %}
+{% set lt_bg = '#dcfce7' %}{% set lt_color = '#166534' %}{% set lt_label = 'Fast' %}
+{% elif lt < 5 %}
+{% set lt_bg = '#fef9c3' %}{% set lt_color = '#854d0e' %}{% set lt_label = 'Moderate' %}
+{% else %}
+{% set lt_bg = '#fee2e2' %}{% set lt_color = '#b91c1c' %}{% set lt_label = 'Slow' %}
+{% endif %}
+<span
+  class="issue-tag"
+  title="Total time for this page to fully load. Under 2s is ideal. Over 5s will frustrate users and hurt SEO."
+  style="background: {{ lt_bg }}; color: {{ lt_color }}"
+>
+  {{ lt_label }} ({{ "%.2f"|format(lt) }}s)
+</span>
                           {% else %}
                           <span
                             class="issue-tag"
