@@ -2789,6 +2789,43 @@
                             Load: —
                           </span>
                           {% endif %}
+                          {%- set _dqa_row = (p.get('ui_summary') or {}).get('deep_qa') %}
+                          {%- if _dqa_row is not none %}
+                            {%- set _spell = (_dqa_row.get('spell_check') or {}) %}
+                            {%- if _spell.get('skipped') %}
+                          <span
+                            class="issue-tag"
+                            style="background:#f1f5f9;color:#64748b;"
+                            title="Spell check not available — Groq API not configured or page has insufficient text."
+                          >
+                            <i class="fa-solid fa-spell-check" style="font-size:9px;margin-right:3px;opacity:.5;"></i>Spell N/A
+                          </span>
+                            {%- elif (_spell.get('total') or 0) == 0 or _spell.get('grade') == 'Good' %}
+                          <span
+                            class="issue-tag"
+                            style="background:#dcfce7;color:#166534;"
+                            title="No spelling errors detected on this page."
+                          >
+                            <i class="fa-solid fa-spell-check" style="font-size:9px;margin-right:3px;"></i>0 Spelling Errors
+                          </span>
+                            {%- elif _spell.get('grade') == 'Needs Review' %}
+                          <span
+                            class="issue-tag"
+                            style="background:#fef9c3;color:#854d0e;"
+                            title="{{ _spell.get('total', 0) }} spelling issue(s) — Grade: Needs Review."
+                          >
+                            <i class="fa-solid fa-spell-check" style="font-size:9px;margin-right:3px;"></i>{{ _spell.get('total', 0) }} Spelling Issue{{ 's' if (_spell.get('total') or 0) != 1 else '' }}
+                          </span>
+                            {%- else %}
+                          <span
+                            class="issue-tag"
+                            style="background:#fee2e2;color:#b91c1c;"
+                            title="{{ _spell.get('total', 0) }} spelling error(s) — Grade: {{ _spell.get('grade', 'Poor') }}."
+                          >
+                            <i class="fa-solid fa-spell-check" style="font-size:9px;margin-right:3px;"></i>{{ _spell.get('total', 0) }} Spelling Error{{ 's' if (_spell.get('total') or 0) != 1 else '' }}
+                          </span>
+                            {%- endif %}
+                          {%- endif %}
                           <!-- FIX 1 END -->
                         </div>
 
@@ -5568,7 +5605,7 @@
         modalContent.innerHTML = sourceDiv.innerHTML;
 
         // Show the actual page URL in the modal header
-        const urlInput = document.getElementById(`page-url-${index}`);
+        const urlInput = modalContent.querySelector(`#page-url-${index}`);
         const pageUrl = urlInput ? urlInput.value : `RAW-${index}`;
         document.getElementById("modalId").innerText = pageUrl;
 
@@ -5579,7 +5616,7 @@
           if (modalContent.querySelector(`#tab-btn-ui-${index}`)) {
             switchModalTab("ui", index);
             // Initialise UI tab KPI + table after switch
-            if (window.initUiTab) window.initUiTab(index);
+            if (window.initUiTab) window.initUiTab(index, modalContent);
           }
         }, 80);
       }
@@ -6029,56 +6066,48 @@
       if (!window.__uiTabInit) {
         window.__uiTabInit = true;
 
-        // ── State per modal index ──
-        const _ui = {}; // { idx: { elements, filtered, page, perPage, activeTag } }
+        // ── State per modal index ──────────────────────────────────────────────
+        // FIX: added `container` field — stores the modalContent element so every
+        //      DOM query is scoped to the correct modal instance, preventing
+        //      "always shows page-0 data" bug caused by document.getElementById
+        //      finding the original hidden source divs instead of the cloned ones.
+        const _ui = {}; // { idx: { elements, filtered, page, perPage, activeTag, search, container } }
 
         const TAG_META = {
-          a: { icon: "fa-link", color: "#6366f1", label: "Links" },
-          button: {
-            icon: "fa-hand-pointer",
-            color: "#ec4899",
-            label: "Buttons",
-          },
-          input: {
-            icon: "fa-pen-to-square",
-            color: "#f59e0b",
-            label: "Inputs",
-          },
-          select: { icon: "fa-caret-down", color: "#10b981", label: "Selects" },
-          img: { icon: "fa-image", color: "#3b82f6", label: "Images" },
-          form: { icon: "fa-wpforms", color: "#8b5cf6", label: "Forms" },
-          nav: { icon: "fa-bars", color: "#64748b", label: "Nav" },
+          a:      { icon: "fa-link",         color: "#6366f1", label: "Links"   },
+          button: { icon: "fa-hand-pointer", color: "#ec4899", label: "Buttons" },
+          input:  { icon: "fa-pen-to-square",color: "#f59e0b", label: "Inputs"  },
+          select: { icon: "fa-caret-down",   color: "#10b981", label: "Selects" },
+          img:    { icon: "fa-image",        color: "#3b82f6", label: "Images"  },
+          form:   { icon: "fa-wpforms",      color: "#8b5cf6", label: "Forms"   },
+          nav:    { icon: "fa-bars",         color: "#64748b", label: "Nav"     },
         };
 
-        function _tagColor(tag) {
-          return TAG_META[tag] ? TAG_META[tag].color : "#94a3b8";
-        }
-        function _tagIcon(tag) {
-          return TAG_META[tag] ? TAG_META[tag].icon : "fa-code";
-        }
+        function _tagColor(tag) { return TAG_META[tag] ? TAG_META[tag].color : "#94a3b8"; }
+        function _tagIcon(tag)  { return TAG_META[tag] ? TAG_META[tag].icon  : "fa-code"; }
 
-        // ── Initialise a specific modal index ──
-        window.initUiTab = function (idx) {
-          const raw = document.getElementById(`ui-data-${idx}`);
-          const sumRaw = document.getElementById(`ui-summary-${idx}`);
+        // ── FIX: Accept container as second parameter ──────────────────────────
+        // All internal DOM lookups use ctx.querySelector() — never document.getElementById()
+        window.initUiTab = function (idx, container) {
+          const ctx = container || document;   // fall back for any legacy callers
+
+          const raw    = ctx.querySelector(`#ui-data-${idx}`);
+          const sumRaw = ctx.querySelector(`#ui-summary-${idx}`);
           if (!raw) return;
 
           let elements = [];
-          let summary = {};
-          try {
-            elements = JSON.parse(raw.textContent || "[]");
-          } catch (e) {}
-          try {
-            summary = JSON.parse(sumRaw ? sumRaw.textContent : "{}");
-          } catch (e) {}
+          let summary  = {};
+          try { elements = JSON.parse(raw.textContent || "[]"); } catch (e) {}
+          try { summary  = JSON.parse(sumRaw ? sumRaw.textContent : "{}"); } catch (e) {}
 
           _ui[idx] = {
-            elements: elements,
-            filtered: elements,
-            page: 1,
-            perPage: 25,
+            elements:  elements,
+            filtered:  elements,
+            page:      1,
+            perPage:   25,
             activeTag: "all",
-            search: "",
+            search:    "",
+            container: ctx,          // ← stored so _render* helpers can find their elements
           };
 
           _renderKPI(idx, elements, summary);
@@ -6086,93 +6115,37 @@
           _renderTable(idx);
         };
 
-        // ── KPI strip ──
-        // CHANGED: "Total Elements" → "Visible Elements" (all elements are now
-        //          pre-filtered to visible-only by the crawler).
-        //          "Hidden" KPI removed — always 0 after crawler fix, pure noise.
-        //          "Images" KPI added — surfaces summary.images from crawler.
-        //          Tooltips added via title="" on each card.
+        // ── KPI strip ──────────────────────────────────────────────────────────
         function _renderKPI(idx, elements, summary) {
-          const container = document.getElementById(`ui-kpi-${idx}`);
+          const ctx       = (_ui[idx] && _ui[idx].container) || document;
+          const container = ctx.querySelector(`#ui-kpi-${idx}`);
           if (!container) return;
 
-          // Count by tag type from the elements array
           const tagCounts = {};
           elements.forEach((el) => {
             const t = (el.tag || "?").toLowerCase();
             tagCounts[t] = (tagCounts[t] || 0) + 1;
           });
 
-          // All elements are now visible by construction (crawler pre-filters).
-          // summary fields from updated crawler: total_visible, links, buttons, inputs, images.
           const totalVisible = summary.total_visible || elements.length;
-          const linksCount = tagCounts["a"] || summary.links || 0;
+          const linksCount   = tagCounts["a"]      || summary.links   || 0;
           const buttonsCount = tagCounts["button"] || summary.buttons || 0;
-          const inputsCount =
-            (tagCounts["input"] || 0) +
-              (tagCounts["select"] || 0) +
-              (tagCounts["textarea"] || 0) ||
-            summary.inputs ||
-            0;
-          const imagesCount = summary.images || 0;
+          const inputsCount  = (tagCounts["input"] || 0) + (tagCounts["select"] || 0) +
+                               (tagCounts["textarea"] || 0) || summary.inputs || 0;
+          const imagesCount  = summary.images || 0;
 
           const kpis = [
-            {
-              label: "Visible Elements",
-              value: totalVisible,
-              icon: "fa-layer-group",
-              color: "#6366f1",
-              bg: "rgba(99,102,241,0.08)",
-              title:
-                "Total interactive elements visible to the user on this page",
-            },
-            {
-              label: "Links",
-              value: linksCount,
-              icon: "fa-link",
-              color: "#6366f1",
-              bg: "rgba(99,102,241,0.06)",
-              title: "Visible <a href> anchor links",
-            },
-            {
-              label: "Buttons",
-              value: buttonsCount,
-              icon: "fa-hand-pointer",
-              color: "#ec4899",
-              bg: "rgba(236,72,153,0.06)",
-              title: "Visible <button> and [role=button] elements",
-            },
-            {
-              label: "Inputs",
-              value: inputsCount,
-              icon: "fa-pen-to-square",
-              color: "#f59e0b",
-              bg: "rgba(245,158,11,0.06)",
-              title: "Visible <input>, <select>, <textarea> fields",
-            },
-            {
-              label: "Images",
-              value: imagesCount,
-              icon: "fa-image",
-              color: "#3b82f6",
-              bg: "rgba(59,130,246,0.06)",
-              title: "Visible <img> elements",
-            },
+            { label: "Visible Elements", value: totalVisible, icon: "fa-layer-group",  color: "#6366f1", bg: "rgba(99,102,241,0.08)",  title: "Total interactive elements visible to the user on this page" },
+            { label: "Links",            value: linksCount,   icon: "fa-link",          color: "#6366f1", bg: "rgba(99,102,241,0.06)",  title: "Visible <a href> anchor links" },
+            { label: "Buttons",          value: buttonsCount, icon: "fa-hand-pointer",  color: "#ec4899", bg: "rgba(236,72,153,0.06)",  title: "Visible <button> and [role=button] elements" },
+            { label: "Inputs",           value: inputsCount,  icon: "fa-pen-to-square", color: "#f59e0b", bg: "rgba(245,158,11,0.06)",  title: "Visible <input>, <select>, <textarea> fields" },
+            { label: "Images",           value: imagesCount,  icon: "fa-image",         color: "#3b82f6", bg: "rgba(59,130,246,0.06)",  title: "Visible <img> elements" },
           ];
 
-          container.innerHTML = kpis
-            .map(
-              (k) => `
-      <div title="${k.title}" style="
-        background: ${k.bg};
-        border: 1px solid ${k.color}22;
-        border-radius: 8px;
-        padding: 10px 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-        cursor: default;
-      ">
+          container.innerHTML = kpis.map((k) => `
+      <div title="${k.title}" style="background:${k.bg};border:1px solid ${k.color}22;
+           border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;
+           gap:4px;cursor:default;">
         <div style="display:flex;align-items:center;gap:6px;">
           <i class="fa-solid ${k.icon}" style="font-size:11px;color:${k.color};"></i>
           <span style="font-size:10px;font-weight:700;color:var(--text-muted);
@@ -6180,15 +6153,13 @@
         </div>
         <div style="font-size:20px;font-weight:800;color:${k.color};
                     font-family:var(--font-code);line-height:1;">${k.value}</div>
-      </div>
-    `,
-            )
-            .join("");
+      </div>`).join("");
         }
 
-        // ── Type filter chips ──
+        // ── Type filter chips ──────────────────────────────────────────────────
         function _renderChips(idx, elements) {
-          const container = document.getElementById(`ui-chips-${idx}`);
+          const ctx       = (_ui[idx] && _ui[idx].container) || document;
+          const container = ctx.querySelector(`#ui-chips-${idx}`);
           if (!container) return;
 
           const tagCounts = {};
@@ -6197,68 +6168,47 @@
             tagCounts[t] = (tagCounts[t] || 0) + 1;
           });
 
-          const sorted = Object.entries(tagCounts)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 7);
+          const sorted = Object.entries(tagCounts).sort((a, b) => b[1] - a[1]).slice(0, 7);
+          const chips  = [["all", elements.length], ...sorted];
 
-          const chips = [["all", elements.length], ...sorted];
-
-          container.innerHTML = chips
-            .map(([tag, count]) => {
-              const meta = TAG_META[tag];
-              const color = meta ? meta.color : "#64748b";
-              const label = meta ? meta.label : tag.toUpperCase();
-              const icon = meta ? meta.icon : "fa-code";
-              const isAll = tag === "all";
-
-              return `
-        <button
-          onclick="uiSetTag(${idx}, '${tag}')"
-          id="ui-chip-${idx}-${tag}"
-          style="
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            cursor: pointer;
-            border: 1.5px solid ${isAll ? "#6366f1" : color + "44"};
-            background: ${isAll ? "#6366f1" : color + "11"};
-            color: ${isAll ? "white" : color};
-            transition: all 0.15s;
-            font-family: var(--font-main);
-          "
-        >
+          container.innerHTML = chips.map(([tag, count]) => {
+            const meta  = TAG_META[tag];
+            const color = meta ? meta.color : "#64748b";
+            const label = meta ? meta.label : tag.toUpperCase();
+            const icon  = meta ? meta.icon  : "fa-code";
+            const isAll = tag === "all";
+            return `
+        <button onclick="uiSetTag(${idx}, '${tag}')" id="ui-chip-${idx}-${tag}"
+          style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
+                 border-radius:20px;font-size:11px;font-weight:600;cursor:pointer;
+                 border:1.5px solid ${isAll ? "#6366f1" : color + "44"};
+                 background:${isAll ? "#6366f1" : color + "11"};
+                 color:${isAll ? "white" : color};
+                 transition:all 0.15s;font-family:var(--font-main);">
           <i class="fa-solid ${isAll ? "fa-asterisk" : icon}" style="font-size:9px;"></i>
           ${isAll ? "All" : label}
-          <span style="
-            background: ${isAll ? "rgba(255,255,255,0.25)" : color + "22"};
-            padding: 1px 5px;
-            border-radius: 10px;
-            font-size: 10px;
-          ">${count}</span>
-        </button>
-      `;
-            })
-            .join("");
+          <span style="background:${isAll ? "rgba(255,255,255,0.25)" : color + "22"};
+                       padding:1px 5px;border-radius:10px;font-size:10px;">${count}</span>
+        </button>`;
+          }).join("");
         }
 
-        // ── Render table for current state ──
+        // ── Render table for current state ─────────────────────────────────────
         function _renderTable(idx) {
           const state = _ui[idx];
           if (!state) return;
 
-          const tbody = document.getElementById(`ui-tbody-${idx}`);
-          const empty = document.getElementById(`ui-empty-${idx}`);
-          const pgInfo = document.getElementById(`ui-pg-info-${idx}`);
-          const pgBtns = document.getElementById(`ui-pg-btns-${idx}`);
-          const counter = document.getElementById(`ui-count-${idx}`);
+          // FIX: every querySelector goes through stored container
+          const ctx    = state.container || document;
+          const tbody  = ctx.querySelector(`#ui-tbody-${idx}`);
+          const empty  = ctx.querySelector(`#ui-empty-${idx}`);
+          const pgInfo = ctx.querySelector(`#ui-pg-info-${idx}`);
+          const pgBtns = ctx.querySelector(`#ui-pg-btns-${idx}`);
+          const counter = ctx.querySelector(`#ui-count-${idx}`);
           if (!tbody) return;
 
           const { filtered, page, perPage } = state;
-          const total = filtered.length;
+          const total    = filtered.length;
           const totalPgs = Math.max(1, Math.ceil(total / perPage));
           const safePage = Math.min(page, totalPgs);
           state.page = safePage;
@@ -6266,237 +6216,166 @@
           const start = (safePage - 1) * perPage;
           const slice = filtered.slice(start, start + perPage);
 
-          if (counter)
-            counter.textContent = `${total} element${total !== 1 ? "s" : ""}`;
+          if (counter) counter.textContent = `${total} element${total !== 1 ? "s" : ""}`;
 
           if (total === 0) {
             tbody.innerHTML = "";
             if (empty) empty.style.display = "block";
           } else {
             if (empty) empty.style.display = "none";
+            tbody.innerHTML = slice.map((el) => {
+              const tag    = (el.tag || "?").toLowerCase();
+              const color  = _tagColor(tag);
+              const icon   = _tagIcon(tag);
+              const text   = el.text && el.text.trim() ? el.text.trim() : null;
+              const elType = el.type  || null;
+              const elId   = el.id    || null;
+              const elHref = el.href  || null;
+              const elAria = el.ariaLabel || null;
 
-            tbody.innerHTML = slice
-              .map((el) => {
-                const tag = (el.tag || "?").toLowerCase();
-                const color = _tagColor(tag);
-                const icon = _tagIcon(tag);
-                const text = el.text && el.text.trim() ? el.text.trim() : null;
-                const elType = el.type || null;
-                const elId = el.id || null;
+              let typeIdHtml = "";
+              if (elType) typeIdHtml += `<span style="display:inline-block;background:#f1f5f9;color:#475569;padding:1px 6px;border-radius:4px;font-size:10px;font-family:var(--font-code);margin-bottom:${elId ? "3px" : "0"};">${elType}</span>`;
+              if (elId)   typeIdHtml += `<span style="display:block;font-size:10px;font-family:var(--font-code);color:#6366f1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="#${elId}">#${elId}</span>`;
+              if (!typeIdHtml) typeIdHtml = `<span style="color:#cbd5e1;font-size:11px;">—</span>`;
 
-                // CHANGED: added href + ariaLabel fallbacks for icon-only elements
-                const elHref = el.href || null;
-                const elAria = el.ariaLabel || null;
+              let labelHtml;
+              if (text) {
+                labelHtml = `<span style="font-size:12px;color:var(--text-main);font-weight:500;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${text.replace(/"/g, "&quot;")}">${text}</span>`;
+              } else if (elHref) {
+                labelHtml = `<span style="font-size:11px;color:#6366f1;font-family:var(--font-code);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;" title="${elHref}">${elHref.substring(0, 60)}</span>`;
+              } else if (elAria) {
+                labelHtml = `<span style="font-size:11px;color:#64748b;font-style:italic;" title="${elAria}">${elAria}</span>`;
+              } else {
+                labelHtml = `<span style="font-size:11px;color:#cbd5e1;font-style:italic;">No text</span>`;
+              }
 
-                // Type / ID cell
-                let typeIdHtml = "";
-                if (elType) {
-                  typeIdHtml += `<span style="display:inline-block;background:#f1f5f9;color:#475569;padding:1px 6px;border-radius:4px;font-size:10px;font-family:var(--font-code);margin-bottom:${elId ? "3px" : "0"};">${elType}</span>`;
-                }
-                if (elId) {
-                  typeIdHtml += `<span style="display:block;font-size:10px;font-family:var(--font-code);color:#6366f1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px;" title="#${elId}">#${elId}</span>`;
-                }
-                if (!typeIdHtml)
-                  typeIdHtml = `<span style="color:#cbd5e1;font-size:11px;">—</span>`;
-
-                // CHANGED: Text / Label cell — smarter fallback chain:
-                //   primary:   visible inner text
-                //   secondary: href (for icon-only links)
-                //   tertiary:  aria-label
-                //   fallback:  "No text" placeholder
-                let labelHtml;
-                if (text) {
-                  labelHtml = `<span style="font-size:12px;color:var(--text-main);font-weight:500;
-                                display:block;overflow:hidden;text-overflow:ellipsis;
-                                white-space:nowrap;" title="${text.replace(/"/g, "&quot;")}">${text}</span>`;
-                } else if (elHref) {
-                  labelHtml = `<span style="font-size:11px;color:#6366f1;font-family:var(--font-code);
-                                overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-                                display:block;" title="${elHref}">${elHref.substring(0, 60)}</span>`;
-                } else if (elAria) {
-                  labelHtml = `<span style="font-size:11px;color:#64748b;font-style:italic;"
-                                title="${elAria}">${elAria}</span>`;
-                } else {
-                  labelHtml = `<span style="font-size:11px;color:#cbd5e1;font-style:italic;">No text</span>`;
-                }
-
-                // CHANGED: "Visible" 4th column removed — all elements are visible
-                //          by construction after the crawler fix, so the column
-                //          was a green ✓ on every single row (noise, not signal).
-                return `
+              return `
           <tr style="border-bottom:1px solid #f1f5f9;transition:background 0.1s;"
               onmouseover="this.style.background='#f8fafc'"
               onmouseout="this.style.background=''">
             <td style="padding:9px 14px;vertical-align:middle;">
-              <span style="
-                display: inline-flex;
-                align-items: center;
-                gap: 5px;
-                background: ${color}11;
-                border: 1px solid ${color}33;
-                color: ${color};
-                padding: 3px 8px;
-                border-radius: 5px;
-                font-family: var(--font-code);
-                font-size: 11px;
-                font-weight: 700;
-              ">
-                <i class="fa-solid ${icon}" style="font-size:9px;"></i>
-                ${tag}
+              <span style="display:inline-flex;align-items:center;gap:5px;
+                background:${color}11;border:1px solid ${color}33;color:${color};
+                padding:3px 8px;border-radius:5px;font-family:var(--font-code);
+                font-size:11px;font-weight:700;">
+                <i class="fa-solid ${icon}" style="font-size:9px;"></i>${tag}
               </span>
             </td>
-            <td style="padding:9px 14px;vertical-align:middle;max-width:240px;">
-              ${labelHtml}
-            </td>
+            <td style="padding:9px 14px;vertical-align:middle;max-width:240px;">${labelHtml}</td>
             <td style="padding:9px 14px;vertical-align:middle;max-width:140px;">${typeIdHtml}</td>
-          </tr>
-        `;
-              })
-              .join("");
+          </tr>`;
+            }).join("");
           }
 
-          // Pagination info
           if (pgInfo) {
-            pgInfo.textContent =
-              total === 0
-                ? ""
-                : `Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total}`;
+            pgInfo.textContent = total === 0 ? "" :
+              `Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total}`;
           }
 
-          // Pagination buttons
           if (pgBtns) {
             if (totalPgs <= 1) {
               pgBtns.innerHTML = "";
             } else {
-              const btnStyle = (active) => `
-          min-width:28px;height:28px;
-          border:1.5px solid ${active ? "#6366f1" : "var(--border)"};
-          background:${active ? "#6366f1" : "var(--card-bg)"};
-          color:${active ? "white" : "var(--text-muted)"};
-          border-radius:6px;
-          font-size:11px;font-weight:600;
-          cursor:pointer;
-          font-family:var(--font-main);
-          transition:all 0.15s;
-          display:inline-flex;align-items:center;justify-content:center;
-          padding:0 6px;
-        `;
+              const btnStyle = (active) => `min-width:28px;height:28px;` +
+                `border:1.5px solid ${active ? "#6366f1" : "var(--border)"};` +
+                `background:${active ? "#6366f1" : "var(--card-bg)"};` +
+                `color:${active ? "white" : "var(--text-muted)"};` +
+                `border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;` +
+                `font-family:var(--font-main);transition:all 0.15s;` +
+                `display:inline-flex;align-items:center;justify-content:center;padding:0 6px;`;
 
-              let html = `
-          <button style="${btnStyle(false)}opacity:${safePage === 1 ? 0.4 : 1};cursor:${safePage === 1 ? "not-allowed" : "pointer"};"
+              let html = `<button style="${btnStyle(false)}opacity:${safePage === 1 ? 0.4 : 1};cursor:${safePage === 1 ? "not-allowed" : "pointer"};"
                   onclick="uiGotoPage(${idx},${safePage - 1})" ${safePage === 1 ? "disabled" : ""}>
             <i class="fa-solid fa-chevron-left" style="font-size:9px;"></i>
-          </button>
-        `;
+          </button>`;
 
               const pages = new Set(
                 [1, totalPgs, safePage, safePage - 1, safePage + 1].filter(
-                  (p) => p >= 1 && p <= totalPgs,
-                ),
-              );
+                  (p) => p >= 1 && p <= totalPgs));
               const sortedPgs = [...pages].sort((a, b) => a - b);
               let prev = null;
               for (const p of sortedPgs) {
-                if (prev !== null && p - prev > 1) {
+                if (prev !== null && p - prev > 1)
                   html += `<span style="font-size:11px;color:var(--text-muted);padding:0 3px;">…</span>`;
-                }
                 html += `<button style="${btnStyle(p === safePage)}" onclick="uiGotoPage(${idx},${p})">${p}</button>`;
                 prev = p;
               }
 
-              html += `
-          <button style="${btnStyle(false)}opacity:${safePage === totalPgs ? 0.4 : 1};cursor:${safePage === totalPgs ? "not-allowed" : "pointer"};"
+              html += `<button style="${btnStyle(false)}opacity:${safePage === totalPgs ? 0.4 : 1};cursor:${safePage === totalPgs ? "not-allowed" : "pointer"};"
                   onclick="uiGotoPage(${idx},${safePage + 1})" ${safePage === totalPgs ? "disabled" : ""}>
             <i class="fa-solid fa-chevron-right" style="font-size:9px;"></i>
-          </button>
-        `;
+          </button>`;
               pgBtns.innerHTML = html;
             }
           }
         }
 
-        // ── Apply filter (search + tag) ──
-        // CHANGED: search now also matches against href and ariaLabel fields
+        // ── Apply filter (search + tag) ─────────────────────────────────────────
         function _applyFilter(idx) {
           const state = _ui[idx];
           if (!state) return;
 
-          const search = (state.search || "").toLowerCase().trim();
+          const search    = (state.search || "").toLowerCase().trim();
           const activeTag = state.activeTag || "all";
 
           state.filtered = state.elements.filter((el) => {
-            const tag = (el.tag || "").toLowerCase();
+            const tag  = (el.tag  || "").toLowerCase();
             const text = (el.text || "").toLowerCase();
             const type = (el.type || "").toLowerCase();
-            const id = (el.id || "").toLowerCase();
+            const id   = (el.id   || "").toLowerCase();
             const href = (el.href || "").toLowerCase();
             const aria = (el.ariaLabel || "").toLowerCase();
 
-            const tagMatch = activeTag === "all" || tag === activeTag;
-            const srchMatch =
-              !search ||
-              text.includes(search) ||
-              tag.includes(search) ||
-              type.includes(search) ||
-              id.includes(search) ||
-              href.includes(search) ||
-              aria.includes(search);
-
+            const tagMatch  = activeTag === "all" || tag === activeTag;
+            const srchMatch = !search ||
+              text.includes(search) || tag.includes(search) ||
+              type.includes(search) || id.includes(search) ||
+              href.includes(search) || aria.includes(search);
             return tagMatch && srchMatch;
           });
 
           state.page = 1;
 
-          // Update chip active styles
-          const chips = document.getElementById(`ui-chips-${idx}`);
+          // FIX: use stored container for chip styling
+          const ctx   = state.container || document;
+          const chips = ctx.querySelector(`#ui-chips-${idx}`);
           if (chips) {
             chips.querySelectorAll("button").forEach((btn) => {
-              const btnTag = btn.id.replace(`ui-chip-${idx}-`, "");
+              const btnTag   = btn.id.replace(`ui-chip-${idx}-`, "");
               const isActive = btnTag === activeTag;
-              const meta = TAG_META[btnTag];
-              const color = meta ? meta.color : "#64748b";
-              btn.style.background = isActive
-                ? btnTag === "all"
-                  ? "#6366f1"
-                  : color
-                : color + "11";
-              btn.style.color = isActive ? "white" : color;
-              btn.style.borderColor = isActive
-                ? btnTag === "all"
-                  ? "#6366f1"
-                  : color
-                : color + "44";
+              const meta     = TAG_META[btnTag];
+              const color    = meta ? meta.color : "#64748b";
+              btn.style.background  = isActive ? (btnTag === "all" ? "#6366f1" : color) : color + "11";
+              btn.style.color       = isActive ? "white" : color;
+              btn.style.borderColor = isActive ? (btnTag === "all" ? "#6366f1" : color) : color + "44";
             });
           }
 
           _renderTable(idx);
         }
 
-        // ── Public API ──
+        // ── Public API (called from onclick attrs in generated HTML) ────────────
 
+        // FIX: look up the search input via stored container, not document.getElementById
         window.uiFilter = function (idx) {
-          const input = document.getElementById(`ui-search-${idx}`);
-          if (_ui[idx]) {
-            _ui[idx].search = input ? input.value : "";
-            _applyFilter(idx);
-          }
+          const state = _ui[idx];
+          if (!state) return;
+          const ctx   = state.container || document;
+          const input = ctx.querySelector(`#ui-search-${idx}`);
+          state.search = input ? input.value : "";
+          _applyFilter(idx);
         };
 
         window.uiSetTag = function (idx, tag) {
-          if (_ui[idx]) {
-            _ui[idx].activeTag = tag;
-            _applyFilter(idx);
-          }
+          if (_ui[idx]) { _ui[idx].activeTag = tag; _applyFilter(idx); }
         };
 
         window.uiGotoPage = function (idx, pg) {
-          if (_ui[idx]) {
-            _ui[idx].page = pg;
-            _renderTable(idx);
-          }
+          if (_ui[idx]) { _ui[idx].page = pg; _renderTable(idx); }
         };
       }
     </script>
+    
     <script id="deep-qa-js">
       // ── Deep QA Frontend Renderer v3 — NO EMOJIS, Full FA Icons ──────────────
       (function () {

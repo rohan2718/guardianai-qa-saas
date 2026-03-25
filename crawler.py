@@ -701,6 +701,28 @@ async def _do_login(context, auth: dict) -> bool:
         await page.close()
 
 # ── Main Crawl Loop ────────────────────────────────────────────────────────────
+def classify_error(error_obj: dict) -> dict:
+    msg = (error_obj.get("message") or "").lower()
+    location = (error_obj.get("location") or "").lower()
+
+    # 🔥 PRIORITY 1 — real JS crashes
+    if "cannot read" in msg or "undefined" in msg:
+        return {**error_obj, "type": "js", "severity": "high"}
+
+    # 🔥 PRIORITY 2 — API failures
+    if "fetch" in msg or "api" in msg or "xhr" in msg:
+        return {**error_obj, "type": "api", "severity": "high"}
+
+    # 🔥 PRIORITY 3 — resource load failures
+    if "failed to load resource" in msg:
+        # third-party check
+        if "cdn" in location or "jsdelivr" in location:
+            return {**error_obj, "type": "third_party", "severity": "low"}
+        return {**error_obj, "type": "resource", "severity": "low"}
+
+    # default
+    return {**error_obj, "type": "js", "severity": "medium"}
+
 
 async def crawl_site(
     context,
@@ -742,6 +764,7 @@ async def crawl_site(
         # ── JS error collection — structured with stack traces ────────────────
         # CHANGE 1: Filter known false-positive patterns before recording.
         js_errors: list[dict] = []
+        resource_errors: list[dict] = []
 
         _JS_ERROR_SKIP_PATTERNS = [
             "No user m",
@@ -762,10 +785,6 @@ async def crawl_site(
             "net::ERR_BLOCKED_BY_CLIENT",
             "net::ERR_BLOCKED_BY_ORB",
             "net::ERR_ABORTED",
-            "Cannot read properties of undefined",  # DataTables init noise
-            "$ is not defined",                      # jQuery load order noise  
-            "jQuery is not defined",
-            "Uncaught TypeError: Cannot read",
         ]
 
         def _capture_js_error(err):
@@ -775,21 +794,34 @@ async def crawl_site(
                 return
             if len(msg.strip()) < 10:
                 return
-            js_errors.append({
+            error_obj = {
                 "message": msg,
-                "stack":   getattr(err, "stack", None) or msg,
-                "source":  "pageerror",
-            })
+                "stack": getattr(err, "stack", None) or msg,
+                "source": "pageerror",
+                "location": None,
+            }
+
+            error_obj = classify_error(error_obj)
+
+            if error_obj["type"] in ["resource", "third_party"]:
+                resource_errors.append(error_obj)
+            else:
+                js_errors.append(error_obj)
 
         def _capture_console_error(msg):
-            """Capture ONLY console.error() — strictly 'error' type."""
+            """Capture console errors and classify them."""
             if msg.type != "error":
                 return
+
             text = msg.text or ""
+
+            # Skip noise
             if any(pat.lower() in text.lower() for pat in _JS_ERROR_SKIP_PATTERNS):
                 return
+
             if len(text.strip()) < 10:
                 return
+
             location = None
             try:
                 loc = msg.location
@@ -797,12 +829,24 @@ async def crawl_site(
                     location = f"{loc.get('url','?')}:{loc.get('lineNumber','?')}"
             except Exception:
                 pass
-            js_errors.append({
-                "message":  text,
-                "stack":    None,
-                "source":   "console.error",
+
+            error_obj = {
+                "message": text,
+                "stack": None,
+                "source": "console.error",
                 "location": location,
-            })
+            }
+
+            # 🔥 classify
+            error_obj = classify_error(error_obj)
+
+            # 🔥 store based on type
+            if error_obj["type"] == "resource":
+                resource_errors.append(error_obj)
+            elif error_obj["type"] == "third_party":
+                resource_errors.append(error_obj)
+            else:
+                js_errors.append(error_obj)
 
         page.on("pageerror", _capture_js_error)
         page.on("console", _capture_console_error)
@@ -855,6 +899,41 @@ async def crawl_site(
             if response and response.url != current_url:
                 redirect_count[0] += 1
 
+            # ── Session loss detection — BEFORE any engine runs ───────────
+            _auth_cfg_pre = _read_auth_config()
+            if _auth_cfg_pre:
+                _now_url     = page.url.lower()
+                _login_slugs = ["login", "signin", "sign-in"]
+                _on_login    = any(
+                    _now_url.rstrip("/").endswith(s) or ("/" + s) in _now_url.split("?")[0]
+                    for s in _login_slugs
+                )
+                _want_login  = any(s in current_url.lower() for s in _login_slugs)
+
+                if _on_login and not _want_login:
+                    logger.warning(
+                        f"[session] Lost BEFORE DOM capture on {current_url} "
+                        f"(landed on {page.url}) — re-authenticating"
+                    )
+                    try:
+                        _ok = await _do_login(context, _auth_cfg_pre)
+                        if _ok:
+                            response = await page.goto(
+                                current_url, wait_until="domcontentloaded", timeout=30000,
+                            )
+                            try:
+                                await page.wait_for_load_state("networkidle", timeout=8000)
+                            except Exception:
+                                pass
+                            status = response.status if response else status
+                            logger.info(f"[session] Reloaded real page → HTTP {status}")
+                        else:
+                            logger.error(f"[session] Re-auth failed — skipping {current_url}")
+                            continue
+                    except Exception as _se:
+                        logger.error(f"[session] Re-auth error: {_se} — skipping {current_url}")
+                        continue
+
             # ── Engine execution gated by filters ──────────────────────────
             dom_data     = {}
             perf_raw     = {}
@@ -900,24 +979,8 @@ async def crawl_site(
                 # This happens when the session expires mid-crawl for some pages.
                 # Re-login and navigate back to the real page before screenshotting.
                 # ── Guard: if page redirected to login, re-authenticate ──────
-                page_url_now = page.url.lower()
-                auth_cfg = _read_auth_config()
-                login_indicators = ["login", "signin", "sign-in", "account/login"]
-                # Only re-auth if we ended up ON the login page (not just a page with "login" in nav)
-                actually_on_login = any(
-                    page_url_now.rstrip("/").endswith(ind) or 
-                    f"/{ind}" in page_url_now.split("?")[0]
-                    for ind in login_indicators
-                )
-                if auth_cfg and actually_on_login and current_url.lower() not in login_indicators:
-                    logger.warning(f"[screenshot] Session lost on {current_url} — re-authenticating")
-                    try:
-                        re_login_ok = await _do_login(context, auth_cfg)
-                        if re_login_ok:
-                            await page.goto(current_url, wait_until="domcontentloaded", timeout=20000)
-                            await page.wait_for_load_state("networkidle", timeout=8000)
-                    except Exception as re_auth_err:
-                        logger.warning(f"[screenshot] Re-auth failed: {re_auth_err}")
+                # Session loss is now handled before DOM capture above.
+                # No re-auth needed here.   
 
                 # Hide cookie banners / overlays that block the real UI
                 await page.evaluate("""() => {
@@ -939,6 +1002,13 @@ async def crawl_site(
             # ── Link classification ────────────────────────────────────────
             link_data = await classify_links(page, base_url, context)
             link_data["failed_assets"]        = failed_assets_live
+            # Deduplicate resource errors vs failed assets
+            resource_urls = {e.get("location") for e in resource_errors if e.get("location")}
+
+            link_data["failed_assets"] = [
+                fa for fa in failed_assets_live
+                if fa.get("url") not in resource_urls
+            ]
             link_data["third_party_failures"] = third_party_failures_live
             internal_links                    = link_data["internal_links"]
 
@@ -949,9 +1019,12 @@ async def crawl_site(
 
             analyzed_forms   = analyze_all_forms(dom_data.get("forms", []))
 
+            critical_js_errors = [
+                e for e in js_errors if e.get("severity") == "high"
+            ]
             func_input = {
                 "broken_navigation_links": link_data["broken_navigation_links"],
-                "js_errors":               js_errors,
+                "js_errors": critical_js_errors,
                 "status":                  status,
             }
             func_score_data = compute_functional_score(func_input)
@@ -965,6 +1038,15 @@ async def crawl_site(
 
             page_title = await page.title()
 
+            def summarize_errors(errors):
+                summary = {"high": 0, "medium": 0, "low": 0}
+                for e in errors:
+                    sev = e.get("severity", "medium")
+                    summary[sev] += 1
+                return summary
+
+            js_error_summary = summarize_errors(js_errors)
+            resource_error_summary = summarize_errors(resource_errors)
             page_obj = {
                 "url":   current_url,
                 "title": page_title,
@@ -1021,9 +1103,12 @@ async def crawl_site(
 
                 # ── ENRICHED: JS errors now structured dicts ──────────────
                 "js_errors":               js_errors,
+                "resource_errors": resource_errors,
 
                 "failed_requests":         [],
                 "redirect_chain_length":   redirect_count[0],
+                "js_error_summary": js_error_summary,
+                "resource_error_summary": resource_error_summary,
 
                 # Screenshot
                 "screenshot": screenshot_path,
@@ -1045,7 +1130,14 @@ async def crawl_site(
 
             # ── AI / confidence enrichment ─────────────────────────────────
             enrich_page_with_ai_fields(page_obj, active_filters)
-
+            if js_errors:
+                print(f"\n🔥 JS ERRORS on {current_url}:")
+                for err in js_errors:
+                    print(err)
+            if resource_errors:
+                print(f"\n⚠️ RESOURCE ERRORS on {current_url}:")
+                for err in resource_errors:
+                    print(err)
             page_data.append(page_obj)
             anomaly_det.record_success()
 
@@ -1120,6 +1212,7 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
             "Failed Assets":        len(pg.get("failed_assets") or []),
             "3rd Party Failures":   len(pg.get("third_party_failures") or []),
             "JS Errors":            len(pg.get("js_errors") or []),
+            "Resource Errors": len(pg.get("resource_errors") or []),
             "Redirect Chain":       pg.get("redirect_chain_length", 0),
             "Forms Count":          len(pg.get("forms") or []),
             "Buttons":              ui_s.get("buttons", 0),
@@ -1127,6 +1220,11 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
             "Images":               ui_s.get("images", 0),
             "Elements Found":       len(pg.get("ui_elements") or []),
             "Screenshot":           pg.get("screenshot"),
+            "JS Errors (High)": (pg.get("js_error_summary") or {}).get("high", 0),
+            "JS Errors (Medium)": (pg.get("js_error_summary") or {}).get("medium", 0),
+            "JS Errors (Low)": (pg.get("js_error_summary") or {}).get("low", 0),
+
+            "Resource Errors (Low)": (pg.get("resource_error_summary") or {}).get("low", 0),
         })
 
     df = pd.DataFrame(rows)
