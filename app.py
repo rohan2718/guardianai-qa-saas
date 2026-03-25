@@ -53,7 +53,8 @@ from flask_limiter.util import get_remote_address
 from rq import Queue
 from rq.job import Retry
 from werkzeug.security import check_password_hash, generate_password_hash
-
+from flask import (Flask, abort, redirect, render_template,
+                   request, send_from_directory, session, jsonify, send_file) # <-- Added send_file
 from ai_analyzer import analyze_site
 from analytics import generate_metrics, generate_metrics_from_run
 from models import db, User, TestRun, PageResult, AuditLog
@@ -386,8 +387,8 @@ def enrich_run_context(run: TestRun) -> dict:
                 "ui_summary":              r.ui_summary or {},
                 "result":                  "pass" if (r.status or 200) < 400 else "fail",
                 # Counts from DB for page-row badges
-                "broken_navigation_links": [None] * (r.broken_links_count or 0),
-                "js_errors":               [None] * (r.js_errors_count or 0),
+                "broken_navigation_links": [],
+                "js_errors":               [],
                 "is_https":                r.is_https,
                 # Deep Inspection modal fields — empty until augmented from raw JSON
                 "ui_elements":    [],
@@ -420,10 +421,7 @@ def enrich_run_context(run: TestRun) -> dict:
                         row["forms"]           = rp.get("forms")        or []
                         # Template uses item.broken_links as list of {url, status} objects
                         raw_bnl = rp.get("broken_navigation_links") or rp.get("broken_links") or []
-                        row["broken_links"]    = [
-                            {"url": lnk, "status": 404} if isinstance(lnk, str) else lnk
-                            for lnk in raw_bnl
-                        ]
+                        row["broken_links"] = [ {"url": lnk, "status": 404} if isinstance(lnk, str) else lnk for lnk in raw_bnl if lnk is not None]
                         row["connected_pages"] = rp.get("connected_pages") or []
                         row["dom_latency"]     = rp.get("dom_latency") or rp.get("load_time")
                         row["viewport"]        = rp.get("viewport") or "Desktop"
@@ -440,6 +438,23 @@ def enrich_run_context(run: TestRun) -> dict:
                 with open(run.raw_file, "r", encoding="utf-8") as fh:
                     loaded = json.load(fh)
                 raw_data = loaded if isinstance(loaded, list) else []
+                # Normalize all page objects loaded from raw file
+                for _pg in raw_data:
+                    if not isinstance(_pg, dict):
+                        continue
+                    for _lf in ("ui_elements","forms","broken_navigation_links","broken_links",
+                                "failed_assets","third_party_failures","js_errors",
+                                "connected_pages","nav_menus","sidebar_links",
+                                "dropdowns","tabs","modals","accordions","pagination"):
+                        v = _pg.get(_lf)
+                        if v is None:
+                            _pg[_lf] = []
+                        elif isinstance(v, list):
+                            _pg[_lf] = [x for x in v if x is not None]
+                    for _df in ("ui_summary","breadcrumbs","sidebar","performance_metrics",
+                                "accessibility_data","security_data"):
+                        if _pg.get(_df) is None:
+                            _pg[_df] = {}
             except Exception as exc:
                 logger.warning("enrich_run_context: fallback raw file load failed %s — %s", run.raw_file, exc)
 
@@ -1511,6 +1526,42 @@ def dashboard():
     )
 
 
+
+@app.route("/api/run/<int:run_id>/export-pdf")
+@login_required
+def export_run_pdf(run_id):
+    run = db.session.get(TestRun, run_id)
+    if not run or run.user_id != current_user.id:
+        abort(404)
+
+    # Fetch main context
+    ctx = enrich_run_context(run)
+
+    # Fetch QA Intelligence data from the database
+    from models_qa import BugReport, QAFlow, QATestCase
+    ctx['bugs'] = BugReport.query.filter_by(run_id=run.id).all()
+    ctx['flows'] = QAFlow.query.filter_by(run_id=run.id).all()
+    ctx['test_cases'] = QATestCase.query.filter_by(run_id=run.id).all()
+
+    html_content = render_template("report_pdf.html", **ctx)
+
+    from playwright.sync_api import sync_playwright
+    import io
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html_content, wait_until="networkidle")
+        pdf_bytes = page.pdf(
+            format="A4",
+            print_background=True,
+            margin={"top": "0.4in", "right": "0.4in", "bottom": "0.4in", "left": "0.4in"},
+            display_header_footer=True,
+            footer_template='<div style="font-size:10px;width:100%;text-align:center;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>'
+        )
+        browser.close()
+
+    return send_file(io.BytesIO(pdf_bytes), mimetype="application/pdf", as_attachment=True, download_name=f"Full_QA_Audit_{run.id}.pdf")
 # ── Static ─────────────────────────────────────────────────────────────────────
 
 @app.route("/screenshots/<path:filename>")

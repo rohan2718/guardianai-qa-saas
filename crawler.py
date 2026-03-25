@@ -1096,14 +1096,14 @@ async def crawl_site(
                 "is_https":       (security_raw or {}).get("is_https"),
 
                 # Functional — broken links separated
-                "broken_navigation_links": link_data["broken_navigation_links"],
+                "broken_navigation_links": [l for l in link_data.get("broken_navigation_links", [])if isinstance(l, dict) and l.get("url")],
                 "failed_assets":           link_data["failed_assets"],
                 "third_party_failures":    link_data["third_party_failures"],
                 "broken_links":            link_data["broken_navigation_links"],  # legacy alias
 
                 # ── ENRICHED: JS errors now structured dicts ──────────────
-                "js_errors":               js_errors,
-                "resource_errors": resource_errors,
+                "js_errors": [e for e in js_errors if isinstance(e, dict)],
+                "resource_errors": [e for e in resource_errors if isinstance(e, dict)],
 
                 "failed_requests":         [],
                 "redirect_chain_length":   redirect_count[0],
@@ -1138,6 +1138,26 @@ async def crawl_site(
                 print(f"\n⚠️ RESOURCE ERRORS on {current_url}:")
                 for err in resource_errors:
                     print(err)
+            # Sanitize all list fields — remove None entries
+            for _list_field in (
+                "ui_elements", "forms", "dropdowns", "pagination",
+                "nav_menus", "sidebar_links", "tabs", "modals", "accordions",
+                "broken_navigation_links", "broken_links",
+                "failed_assets", "third_party_failures",
+                "js_errors", "failed_requests", "connected_pages",
+            ):
+                val = page_obj.get(_list_field)
+                if val is None:
+                    page_obj[_list_field] = []
+                elif isinstance(val, list):
+                    page_obj[_list_field] = [x for x in val if x is not None]
+
+            # Sanitize dict fields
+            for _dict_field in ("ui_summary", "breadcrumbs", "sidebar", "performance_metrics",
+                                "accessibility_data", "security_data"):
+                if page_obj.get(_dict_field) is None:
+                    page_obj[_dict_field] = {}
+
             page_data.append(page_obj)
             anomaly_det.record_success()
 

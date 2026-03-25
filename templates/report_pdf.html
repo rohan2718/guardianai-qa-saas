@@ -1,0 +1,245 @@
+<!doctype html>
+<html>
+  <head>
+    <style>
+      @page {
+        size: A4;
+        margin: 0;
+      }
+      body {
+        font-family: "Inter", sans-serif;
+        color: #1e293b;
+        line-height: 1.5;
+        margin: 0;
+        padding: 0;
+      }
+      .cover {
+        height: 100vh;
+        background: #6366f1;
+        color: white;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 60px;
+        page-break-after: always;
+        -webkit-print-color-adjust: exact;
+      }
+      .page {
+        padding: 50px;
+        page-break-after: always;
+      }
+      h1 {
+        font-size: 42px;
+        margin-bottom: 10px;
+      }
+      h2 {
+        font-size: 24px;
+        border-bottom: 2px solid #e2e8f0;
+        padding-bottom: 10px;
+        margin-top: 30px;
+        color: #4f46e5;
+      }
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr 1fr;
+        gap: 15px;
+        margin: 20px 0;
+      }
+      .kpi-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 15px;
+        text-align: center;
+      }
+      .kpi-val {
+        font-size: 24px;
+        font-weight: 800;
+        color: #6366f1;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 15px 0;
+      }
+      th {
+        background: #f1f5f9;
+        padding: 10px;
+        text-align: left;
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+      td {
+        border-bottom: 1px solid #f1f5f9;
+        padding: 10px;
+        font-size: 11px;
+        vertical-align: top;
+      }
+
+      .bug-card {
+        border: 1px solid #fee2e2;
+        border-left: 5px solid #ef4444;
+        padding: 15px;
+        margin-bottom: 15px;
+        border-radius: 4px;
+        background: #fffafb;
+      }
+      .flow-step {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 8px;
+        border-left: 2px solid #e2e8f0;
+        padding-left: 15px;
+        position: relative;
+      }
+      .step-num {
+        position: absolute;
+        left: -10px;
+        background: #6366f1;
+        color: white;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        font-size: 10px;
+        text-align: center;
+      }
+
+      .badge {
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+      .critical {
+        background: #fee2e2;
+        color: #dc2626;
+      }
+      .pass {
+        background: #dcfce7;
+        color: #166534;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="cover">
+      <p style="text-transform: uppercase; letter-spacing: 2px">
+        Confidential QA Audit
+      </p>
+      <h1>GuardianAI Deep Forensic Report</h1>
+      <p style="font-size: 20px; opacity: 0.8">
+        Target: {{ current_run.target_url }}
+      </p>
+      <p>
+        Scan ID: #{{ current_run.id }} | Date: {{
+        current_run.finished_at.strftime('%Y-%m-%d') if current_run.finished_at
+        else 'Active' }}
+      </p>
+    </div>
+
+    <div class="page">
+      <h2>1. Executive Summary</h2>
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-val">
+            {{ current_run.site_health_score|round(1) }}
+          </div>
+          <div>Site Health</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-val">{{ current_run.total_tests }}</div>
+          <div>Total Pages</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-val">
+            {{ current_run.avg_performance_score|round(1) }}
+          </div>
+          <div>Performance</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-val">
+            {{ current_run.avg_security_score|round(1) }}
+          </div>
+          <div>Security</div>
+        </div>
+      </div>
+      <div style="background: #eef2ff; padding: 20px; border-radius: 8px">
+        {{ ai_insight|safe }}
+      </div>
+    </div>
+
+    <div class="page">
+      <h2>2. Detailed Bug Reports</h2>
+      {% for bug in bugs %}
+      <div class="bug-card">
+        <span class="badge critical">{{ bug.severity }}</span>
+        <strong>{{ bug.bug_title }}</strong>
+        <p><strong>Path:</strong> {{ bug.page_url }}</p>
+        <p>
+          <strong>Expected:</strong> {{ bug.expected_result }}<br /><strong
+            >Actual:</strong
+          >
+          {{ bug.actual_result }}
+        </p>
+        <p style="color: #6366f1">
+          <strong>Fix:</strong> {{ bug.suggested_fix }}
+        </p>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="page">
+      <h2>3. Discovered User Flows</h2>
+      {% for flow in flows %}
+      <div
+        style="
+          margin-bottom: 25px;
+          padding: 15px;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+        "
+      >
+        <h3>Flow: {{ flow.flow_name }}</h3>
+        {% for step in flow.steps %}
+        <div class="flow-step">
+          <div class="step-num">{{ loop.index }}</div>
+          <div>
+            <strong>{{ step.action }}</strong>: {{ step.action_detail }}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="page">
+      <h2>4. Full Crawl Inventory</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>URL</th>
+            <th>Status</th>
+            <th>Score</th>
+            <th>JS Errors</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for page in raw_data %}
+          <tr>
+            <td>{{ page.url }}</td>
+            <td>
+              <span
+                class="badge {{ 'pass' if page.status == 200 else 'critical' }}"
+                >{{ page.status }}</span
+              >
+            </td>
+            <td>{{ page.health_score|round(1) }}</td>
+            <td>{{ (page.js_errors|length) if page.js_errors else 0 }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </body>
+</html>
