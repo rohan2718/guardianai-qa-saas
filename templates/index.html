@@ -2591,25 +2591,25 @@
                         
                         <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px;">
                           <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; min-width: 90px; flex: 1;">
-                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-gauge-high"></i> Perf</div>
+                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-gauge-high"></i> Performance</div>
                             <div style="font-family: var(--font-code); font-size: 18px; font-weight: 700; color: var(--text-main);">
                               {% if p.get('performance_score') is not none %}{{ p.get('performance_score')|round(1) }}{% else %}<span style="font-size:11px;color:#94a3b8;">N/A</span>{% endif %}
                             </div>
                           </div>
                           <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; min-width: 90px; flex: 1;">
-                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-universal-access"></i> A11y</div>
+                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-universal-access"></i> Accessibility</div>
                             <div style="font-family: var(--font-code); font-size: 18px; font-weight: 700; color: var(--text-main);">
                               {% if p.get('accessibility_score') is not none %}{{ p.get('accessibility_score')|round(1) }}{% else %}<span style="font-size:11px;color:#94a3b8;">N/A</span>{% endif %}
                             </div>
                           </div>
                           <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; min-width: 90px; flex: 1;">
-                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-shield-halved"></i> Sec</div>
+                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-shield-halved"></i> Security</div>
                             <div style="font-family: var(--font-code); font-size: 18px; font-weight: 700; color: var(--text-main);">
                               {% if p.get('security_score') is not none %}{{ p.get('security_score')|round(1) }}{% else %}<span style="font-size:11px;color:#94a3b8;">N/A</span>{% endif %}
                             </div>
                           </div>
                           <div style="background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; min-width: 90px; flex: 1;">
-                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-link"></i> Func</div>
+                            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;"><i class="fa-solid fa-link"></i> Functionality</div>
                             <div style="font-family: var(--font-code); font-size: 18px; font-weight: 700; color: var(--text-main);">
                               {% if p.get('functional_score') is not none %}{{ p.get('functional_score')|round(1) }}{% else %}<span style="font-size:11px;color:#94a3b8;">N/A</span>{% endif %}
                             </div>
@@ -3818,16 +3818,55 @@
               </div>
 
               <div id="tab-content-nav-{{ loop.index0 }}" class="tab-pane" style="padding: 18px; background: #f8fafc;">
-                {%- set _nm = item.get('nav_menus') or [] %}
-                {%- set _sl = item.get('sidebar_links') or [] %}
-                
-                {%- if not _nm and not _sl %}
-                <div style="text-align:center;padding:60px 0;color:#94a3b8;">
-                  <i class="fa-solid fa-compass" style="font-size:32px;opacity:0.3;display:block;margin-bottom:12px;"></i>
-                  <span style="font-size:14px;font-weight:500;">No navigation data detected for this page.</span>
-                </div>
-                {%- endif %}
-              </div>
+  {%- set _nm = item.get('nav_menus') or [] %}
+  {%- set _sl = item.get('sidebar_links') or [] %}
+  
+  {%- if not _nm and not _sl %}
+  <div style="text-align:center;padding:60px 0;color:#94a3b8;">
+    <i class="fa-solid fa-compass" style="font-size:32px;opacity:0.3;display:block;margin-bottom:12px;"></i>
+    <span style="font-size:14px;font-weight:500;">No navigation data detected for this page.</span>
+  </div>
+  {%- else %}
+  <div style="display: flex; flex-direction: column; gap: 20px;">
+    
+    {# ── Main Navigation Menus ── #}
+    {% if _nm %}
+    <div class="context-box">
+      <div class="context-heading"><i class="fa-solid fa-bars" style="margin-right: 6px;"></i> Main Navigation Menus</div>
+      {% for nav in _nm %}
+      <div style="margin-bottom: 12px; padding: 12px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">
+        <div style="font-size: 10px; font-weight: 800; color: #64748b; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Menu {{ loop.index }} {{ ('(ID: ' ~ nav.id ~ ')') if nav.id else '' }}
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+          {% for link in nav.links %}
+          <a href="{{ link.href }}" target="_blank" title="{{ link.href }}" style="background: #fff; border: 1px solid #e2e8f0; padding: 5px 12px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: #475569; text-decoration: none; transition: all 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.02);" onmouseover="this.style.borderColor='var(--primary)'; this.style.color='var(--primary)'; this.style.transform='translateY(-1px)';" onmouseout="this.style.borderColor='#e2e8f0'; this.style.color='#475569'; this.style.transform='none';">
+            {{ link.text or link.aria_label or 'Unnamed Link' }}
+          </a>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {# ── Sidebar Links ── #}
+    {% if _sl %}
+    <div class="context-box">
+      <div class="context-heading"><i class="fa-solid fa-list-ul" style="margin-right: 6px;"></i> Sidebar Links</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        {% for link in _sl %}
+        <a href="{{ link.href }}" target="_blank" title="{{ link.href }}" style="background: #fff; border: 1px solid #e2e8f0; padding: 5px 12px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: #475569; text-decoration: none; transition: all 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.02);" onmouseover="this.style.borderColor='var(--primary)'; this.style.color='var(--primary)'; this.style.transform='translateY(-1px)';" onmouseout="this.style.borderColor='#e2e8f0'; this.style.color='#475569'; this.style.transform='none';">
+          {{ link.text or link.aria_label or 'Unnamed Link' }}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+  {%- endif %}
+</div>
 
             </div>
           </div>
