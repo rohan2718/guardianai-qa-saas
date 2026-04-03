@@ -3648,7 +3648,7 @@
     <!-- Hidden source data for modal -->
     <div class="hidden">
       {% if raw_data %} {% for item in raw_data %}
-      <div id="source-{{ loop.index0 }}">
+      <div id="source-{{ loop.index0 }}" class="modal-source hidden">
         <input
           type="hidden"
           id="page-url-{{ loop.index0 }}"
@@ -3735,10 +3735,13 @@
               </button>
               <button onclick="switchModalTab('nav', {{ loop.index0 }})" id="tab-btn-nav-{{ loop.index0 }}" class="tab-btn">
                 <i class="fa-solid fa-bars" style="margin-right: 6px"></i>Navigation
+              </button>     
+              <button onclick="switchModalTab('seo', {{ loop.index0 }})" id="tab-btn-seo-{{ loop.index0 }}" class="tab-btn">
+                <i class="fa-solid fa-magnifying-glass" style="margin-right: 6px"></i>SEO
               </button>
-            </div>
+              </div>
 
-            <div style="flex: 1; overflow-y: auto; position: relative; background: #fff;">
+              <div style="flex: 1; overflow-y: auto; position: relative; background: #fff;">
               
               <div id="tab-content-ui-{{ loop.index0 }}" class="tab-pane active" style="display: flex; flex-direction: column; height: 100%; min-height: 0;">
                 <script type="application/json" id="ui-data-{{ loop.index0 }}">{{ (item.ui_elements or []) | tojson }}</script>
@@ -3788,11 +3791,158 @@
                 </div>
               </div>
 
-              <div id="tab-content-forms-{{ loop.index0 }}" class="tab-pane" style="padding: 18px; background: #f8fafc">
-                <div style="text-align: center; padding: 32px 0; color: #94a3b8">
-                  <i class="fa-solid fa-wpforms" style="font-size: 28px; opacity: 0.3; display: block; margin-bottom: 10px;"></i>
-                  <span style="font-size: 13px">Form logic is intact.</span>
+              <div id="tab-content-forms-{{ loop.index0 }}" class="tab-pane" style="padding: 0; background: #f8fafc;">
+                {%- set _forms = item.get('forms') or [] %}
+                {%- if _forms %}
+                <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;background:#fff;border-bottom:1px solid var(--border);">
+                  <span style="font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;">
+                    <i class="fa-solid fa-wpforms" style="color:var(--primary);margin-right:5px;"></i>
+                    {{ _forms|length }} Form{{ 's' if _forms|length != 1 else '' }} Detected
+                  </span>
+                  {%- set _form_issues = namespace(count=0) %}
+                  {%- for f in _forms %}
+                    {%- set _form_issues.count = _form_issues.count + (f.get('form_issue_count') or 0) %}
+                  {%- endfor %}
+                  {%- if _form_issues.count > 0 %}
+                  <span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:rgba(239,68,68,.08);color:#dc2626;border:1px solid rgba(239,68,68,.2);">
+                    <i class="fa-solid fa-triangle-exclamation"></i> {{ _form_issues.count }} issue{{ 's' if _form_issues.count != 1 else '' }}
+                  </span>
+                  {%- else %}
+                  <span style="font-size:11px;font-weight:700;padding:2px 9px;border-radius:20px;background:rgba(16,185,129,.08);color:#059669;border:1px solid rgba(16,185,129,.2);">
+                    <i class="fa-solid fa-check"></i> All forms healthy
+                  </span>
+                  {%- endif %}
                 </div>
+
+                <div style="overflow-y:auto;max-height:calc(100% - 48px);padding:16px;">
+                {%- for form in _forms %}
+                <div style="background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:14px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);">
+
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#f8fafc;border-bottom:1px solid var(--border);">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                      <div style="width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,rgba(99,102,241,.1),rgba(139,92,246,.1));display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:13px;">
+                        <i class="fa-solid fa-wpforms"></i>
+                      </div>
+                      <div>
+                        <div style="font-size:13px;font-weight:700;color:var(--text-main);">
+                          {{ form.get('form_purpose') or 'Form' }}
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted);font-family:var(--font-code);">
+                          method={{ form.get('method') or 'GET' }}
+                          {%- if form.get('action') %} · action={{ form.get('action')|truncate(40) }}{%- endif %}
+                        </div>
+                      </div>
+                    </div>
+                    <div style="display:flex;gap:6px;align-items:center;">
+                      {%- if form.get('form_health_score') is not none %}
+                      <span style="font-family:var(--font-code);font-size:12px;font-weight:700;color:{{'#059669' if form.get('form_health_score',100) >= 80 else '#d97706' if form.get('form_health_score',100) >= 50 else '#dc2626'}};">
+                        {{ form.get('form_health_score')|round(0)|int }}%
+                      </span>
+                      {%- endif %}
+                      <span style="font-size:10px;padding:2px 8px;border-radius:20px;font-weight:700;text-transform:uppercase;background:{{'rgba(16,185,129,.08)' if (form.get('form_issue_count') or 0) == 0 else 'rgba(239,68,68,.08)'}};color:{{'#059669' if (form.get('form_issue_count') or 0) == 0 else '#dc2626'}};border:1px solid {{'rgba(16,185,129,.2)' if (form.get('form_issue_count') or 0) == 0 else 'rgba(239,68,68,.2)'}};">
+                        {{ (form.get('form_issue_count') or 0) }} issue{{ 's' if (form.get('form_issue_count') or 0) != 1 else '' }}
+                      </span>
+                    </div>
+                  </div>
+
+                  {%- set _fields = form.get('fields') or [] %}
+                  {%- set _real_fields = [] %}
+                  {%- for f in _fields %}
+                    {%- if f.get('type') not in ('hidden', 'submit', 'button', 'reset', 'image') %}
+                      {%- set _ = _real_fields.append(f) %}
+                    {%- endif %}
+                  {%- endfor %}
+
+                  {%- if _real_fields %}
+                  <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                      <tr style="background:#fafafa;">
+                        <th style="padding:8px 14px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;border-bottom:1px solid var(--border);">Field Name</th>
+                        <th style="padding:8px 14px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;border-bottom:1px solid var(--border);">Type</th>
+                        <th style="padding:8px 14px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;border-bottom:1px solid var(--border);">Label</th>
+                        <th style="padding:8px 14px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;border-bottom:1px solid var(--border);">Required</th>
+                        <th style="padding:8px 14px;font-size:10px;text-transform:uppercase;color:#64748b;font-weight:700;text-align:left;border-bottom:1px solid var(--border);">Autocomplete</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {%- for field in _real_fields %}
+                      <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:9px 14px;font-family:var(--font-code);font-size:11px;color:#6366f1;">
+                          {{ field.get('name') or field.get('id') or '—' }}
+                        </td>
+                        <td style="padding:9px 14px;">
+                          <span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:700;background:#f1f5f9;color:#475569;">
+                            {%- if field.get('type') == 'email' %}<i class="fa-solid fa-envelope" style="font-size:9px;"></i>
+                            {%- elif field.get('type') == 'password' %}<i class="fa-solid fa-lock" style="font-size:9px;"></i>
+                            {%- elif field.get('type') == 'tel' %}<i class="fa-solid fa-phone" style="font-size:9px;"></i>
+                            {%- elif field.get('type') == 'number' %}<i class="fa-solid fa-hashtag" style="font-size:9px;"></i>
+                            {%- elif field.get('type') in ('select', 'select-one') %}<i class="fa-solid fa-caret-down" style="font-size:9px;"></i>
+                            {%- elif field.get('type') == 'textarea' %}<i class="fa-solid fa-align-left" style="font-size:9px;"></i>
+                            {%- elif field.get('type') == 'checkbox' %}<i class="fa-solid fa-square-check" style="font-size:9px;"></i>
+                            {%- else %}<i class="fa-solid fa-pen" style="font-size:9px;"></i>{%- endif %}
+                            {{ field.get('type') or 'text' }}
+                          </span>
+                        </td>
+                        <td style="padding:9px 14px;font-size:12px;color:var(--text-main);">
+                          {{ field.get('display_name') or field.get('placeholder') or '—' }}
+                        </td>
+                        <td style="padding:9px 14px;">
+                          {%- if field.get('required') %}
+                          <span style="color:#dc2626;font-size:11px;font-weight:700;">
+                            <i class="fa-solid fa-asterisk" style="font-size:9px;"></i> Required
+                          </span>
+                          {%- else %}
+                          <span style="color:#94a3b8;font-size:11px;">Optional</span>
+                          {%- endif %}
+                        </td>
+                        <td style="padding:9px 14px;font-size:11px;color:var(--text-muted);font-family:var(--font-code);">
+                          {{ field.get('autocomplete') or '—' }}
+                        </td>
+                      </tr>
+                      {%- endfor %}
+                    </tbody>
+                  </table>
+                  {%- else %}
+                  <div style="padding:16px 16px;font-size:12px;color:#94a3b8;font-style:italic;">
+                    No visible input fields detected in this form.
+                  </div>
+                  {%- endif %}
+
+                  {%- set _form_issues_list = form.get('form_issues') or [] %}
+                  {%- if _form_issues_list %}
+                  <div style="border-top:1px solid var(--border);padding:10px 14px;">
+                    <div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">Form Issues</div>
+                    {%- for issue in _form_issues_list %}
+                    <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px dashed #f1f5f9;font-size:12px;">
+                      <span style="color:{{'#dc2626' if issue.get('severity')=='high' else '#d97706' if issue.get('severity')=='medium' else '#94a3b8'}};flex-shrink:0;margin-top:1px;">
+                        <i class="fa-solid {{'fa-circle-xmark' if issue.get('severity')=='high' else 'fa-triangle-exclamation' if issue.get('severity')=='medium' else 'fa-circle-info'}}"></i>
+                      </span>
+                      <span style="color:var(--text-main);">
+                        {{ issue.get('detail') or issue.get('message') or '—' }}
+                        {%- if issue.get('field') %}
+                        <code style="font-size:10px;background:#f1f5f9;padding:1px 5px;border-radius:3px;margin-left:4px;">{{ issue.get('field') }}</code>
+                        {%- endif %}
+                      </span>
+                    </div>
+                    {%- endfor %}
+                  </div>
+                  {%- endif %}
+
+                </div>
+                {%- endfor %}
+                </div>
+
+                {%- else %}
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;padding:60px 24px;color:#94a3b8;text-align:center;">
+                  <div style="width:56px;height:56px;border-radius:14px;background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.12);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--primary);opacity:.5;margin-bottom:16px;">
+                    <i class="fa-solid fa-wpforms"></i>
+                  </div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:6px;">No Forms Detected</div>
+                  <div style="font-size:12px;max-width:260px;line-height:1.6;">
+                    This page does not contain any HTML forms. If you expected forms here, they may be rendered dynamically after user interaction.
+                  </div>
+                </div>
+                {%- endif %}
               </div>
 
               <div id="tab-content-broken-{{ loop.index0 }}" class="tab-pane" style="padding: 18px">
@@ -3817,63 +3967,275 @@
                 <input type="hidden" id="root-url-{{ loop.index0 }}" value="{{ item.url }}" />
               </div>
 
-              <div id="tab-content-nav-{{ loop.index0 }}" class="tab-pane" style="padding: 18px; background: #f8fafc;">
-  {%- set _nm = item.get('nav_menus') or [] %}
-  {%- set _sl = item.get('sidebar_links') or [] %}
-  
-  {%- if not _nm and not _sl %}
-  <div style="text-align:center;padding:60px 0;color:#94a3b8;">
-    <i class="fa-solid fa-compass" style="font-size:32px;opacity:0.3;display:block;margin-bottom:12px;"></i>
-    <span style="font-size:14px;font-weight:500;">No navigation data detected for this page.</span>
-  </div>
-  {%- else %}
-  <div style="display: flex; flex-direction: column; gap: 20px;">
-    
-    {# ── Main Navigation Menus ── #}
-    {% if _nm %}
-    <div class="context-box">
-      <div class="context-heading"><i class="fa-solid fa-bars" style="margin-right: 6px;"></i> Main Navigation Menus</div>
-      {% for nav in _nm %}
-      <div style="margin-bottom: 12px; padding: 12px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px;">
-        <div style="font-size: 10px; font-weight: 800; color: #64748b; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px;">
-          Menu {{ loop.index }} {{ ('(ID: ' ~ nav.id ~ ')') if nav.id else '' }}
-        </div>
-        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-          {% for link in nav.links %}
-          <a href="{{ link.href }}" target="_blank" title="{{ link.href }}" style="background: #fff; border: 1px solid #e2e8f0; padding: 5px 12px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: #475569; text-decoration: none; transition: all 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.02);" onmouseover="this.style.borderColor='var(--primary)'; this.style.color='var(--primary)'; this.style.transform='translateY(-1px)';" onmouseout="this.style.borderColor='#e2e8f0'; this.style.color='#475569'; this.style.transform='none';">
-            {{ link.text or link.aria_label or 'Unnamed Link' }}
-          </a>
-          {% endfor %}
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    {% endif %}
+                            <div id="tab-content-nav-{{ loop.index0 }}" class="tab-pane" style="padding:0;background:#f8fafc;">
+                              {%- set _nm = item.get('nav_menus') or [] %}
+                              {%- set _sl = item.get('sidebar_links') or [] %}
+                              {%- set _has_nav = (_nm|length > 0) or (_sl|length > 0) %}
 
-    {# ── Sidebar Links ── #}
-    {% if _sl %}
-    <div class="context-box">
-      <div class="context-heading"><i class="fa-solid fa-list-ul" style="margin-right: 6px;"></i> Sidebar Links</div>
-      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-        {% for link in _sl %}
-        <a href="{{ link.href }}" target="_blank" title="{{ link.href }}" style="background: #fff; border: 1px solid #e2e8f0; padding: 5px 12px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: #475569; text-decoration: none; transition: all 0.2s; box-shadow: 0 1px 2px rgba(0,0,0,0.02);" onmouseover="this.style.borderColor='var(--primary)'; this.style.color='var(--primary)'; this.style.transform='translateY(-1px)';" onmouseout="this.style.borderColor='#e2e8f0'; this.style.color='#475569'; this.style.transform='none';">
-          {{ link.text or link.aria_label or 'Unnamed Link' }}
-        </a>
-        {% endfor %}
-      </div>
-    </div>
-    {% endif %}
+                              {%- if _has_nav %}
+                              <div style="overflow-y:auto;height:100%;padding:16px;">
 
-  </div>
-  {%- endif %}
-</div>
+                                <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;">
+                                  {%- if _nm %}
+                                  <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(99,102,241,.08);color:var(--primary);border:1px solid rgba(99,102,241,.2);">
+                                    <i class="fa-solid fa-bars"></i>
+                                    {{ _nm|length }} Nav Menu{{ 's' if _nm|length != 1 else '' }}
+                                  </span>
+                                  {%- endif %}
+                                  {%- if _sl %}
+                                  <span style="display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;background:rgba(16,185,129,.08);color:#059669;border:1px solid rgba(16,185,129,.2);">
+                                    <i class="fa-solid fa-sidebar"></i>
+                                    {{ _sl|length }} Sidebar Link{{ 's' if _sl|length != 1 else '' }}
+                                  </span>
+                                  {%- endif %}
+                                </div>
 
-            </div>
-          </div>
-        </div>
-      </div>
-      {% endfor %} {% endif %}
-    </div>
+                                {%- for nav in _nm %}
+                                <div style="background:#fff;border:1px solid var(--border);border-radius:10px;margin-bottom:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);">
+                                  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border);">
+                                    <div style="display:flex;align-items:center;gap:8px;">
+                                      <i class="fa-solid fa-bars" style="color:var(--primary);font-size:12px;"></i>
+                                      <span style="font-size:13px;font-weight:700;color:var(--text-main);">
+                                        {{ nav.get('aria_label') or nav.get('id') or ('Navigation ' ~ loop.index) }}
+                                      </span>
+                                    </div>
+                                    <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:#f1f5f9;color:#64748b;font-weight:700;">
+                                      {{ (nav.get('links') or [])|length }} links
+                                    </span>
+                                  </div>
+                                  <div style="padding:8px 0;">
+                                    {%- for link in (nav.get('links') or [])[:30] %}
+                                    <div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid #f8fafc;transition:background .1s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+                                      <i class="fa-solid fa-arrow-right" style="color:#c7d2fe;font-size:9px;flex-shrink:0;"></i>
+                                      <div style="flex:1;min-width:0;">
+                                        <div style="font-size:13px;font-weight:600;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                          {{ link.get('text') or link.get('aria_label') or '(no text)' }}
+                                        </div>
+                                        {%- if link.get('href') %}
+                                        <div style="font-size:10px;color:#94a3b8;font-family:var(--font-code);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">
+                                          <a href="{{ link.get('href') }}" target="_blank" rel="noopener" style="color:var(--primary);text-decoration:none;" onclick="event.stopPropagation()">
+                                            {{ link.get('href')|truncate(70) }}
+                                          </a>
+                                        </div>
+                                        {%- endif %}
+                                      </div>
+                                      {%- if link.get('aria_label') and link.get('aria_label') != link.get('text') %}
+                                      <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(99,102,241,.08);color:var(--primary);flex-shrink:0;white-space:nowrap;">
+                                        aria: {{ link.get('aria_label')|truncate(20) }}
+                                      </span>
+                                      {%- endif %}
+                                    </div>
+                                    {%- endfor %}
+                                    {%- if (nav.get('links') or [])|length > 30 %}
+                                    <div style="padding:8px 14px;font-size:11px;color:#94a3b8;font-style:italic;">
+                                      ... and {{ (nav.get('links') or [])|length - 30 }} more links
+                                    </div>
+                                    {%- endif %}
+                                  </div>
+                                </div>
+                                {%- endfor %}
+
+                                {%- if _sl %}
+                                <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.04);">
+                                  <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border);">
+                                    <div style="display:flex;align-items:center;gap:8px;">
+                                      <i class="fa-solid fa-table-columns" style="color:#10b981;font-size:12px;"></i>
+                                      <span style="font-size:13px;font-weight:700;color:var(--text-main);">Sidebar Links</span>
+                                    </div>
+                                    <span style="font-size:10px;padding:2px 8px;border-radius:20px;background:#f1f5f9;color:#64748b;font-weight:700;">
+                                      {{ _sl|length }} links
+                                    </span>
+                                  </div>
+                                  <div style="padding:8px 0;">
+                                    {%- for link in _sl[:40] %}
+                                    <div style="display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid #f8fafc;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+                                      <i class="fa-solid fa-arrow-right" style="color:#a7f3d0;font-size:9px;flex-shrink:0;"></i>
+                                      <div style="flex:1;min-width:0;">
+                                        <div style="font-size:13px;font-weight:600;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                                          {{ link.get('text') or link.get('aria_label') or '(no text)' }}
+                                        </div>
+                                        {%- if link.get('href') %}
+                                        <div style="font-size:10px;color:#94a3b8;font-family:var(--font-code);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;">
+                                          <a href="{{ link.get('href') }}" target="_blank" rel="noopener" style="color:#10b981;text-decoration:none;" onclick="event.stopPropagation()">
+                                            {{ link.get('href')|truncate(70) }}
+                                          </a>
+                                        </div>
+                                        {%- endif %}
+                                      </div>
+                                    </div>
+                                    {%- endfor %}
+                                    {%- if _sl|length > 40 %}
+                                    <div style="padding:8px 14px;font-size:11px;color:#94a3b8;font-style:italic;">
+                                      ... and {{ _sl|length - 40 }} more sidebar links
+                                    </div>
+                                    {%- endif %}
+                                  </div>
+                                </div>
+                                {%- endif %}
+
+                              </div>
+
+                              {%- else %}
+                              <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;   padding:60px 24px;color:#94a3b8;text-align:center;">
+                                <div style="width:56px;height:56px;border-radius:14px;background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.12);display:flex;align-items:center;justify-content:center;font-size:22px;color:var(--primary);opacity:.5;margin-bottom:16px;">
+                                  <i class="fa-solid fa-compass"></i>
+                                </div>
+                                <div style="font-size:14px;font-weight:600;color:var(--text-main);margin-bottom:6px;">
+                                  No Navigation Data Detected
+                                </div>
+                                <div style="font-size:12px;max-width:280px;line-height:1.6;">
+                                  No <code>&lt;nav&gt;</code> elements or sidebar links were found on this page. This may indicate the navigation is dynamically rendered or uses non-semantic HTML.
+                                </div>
+                              </div>
+                              {%- endif %}
+                            </div><!-- /tab-content-nav -->
+
+                            <div id="tab-content-seo-{{ loop.index0 }}" class="tab-pane" style="padding:20px; background:#f8fafc; overflow-y:auto; flex:1; min-height:0;">
+                              
+                                {# ── Pull seo_data safely with multiple fallback keys ── #}
+                                {% set _seo = item.seo_data if item.seo_data is defined and item.seo_data else {} %}
+                              
+                                {# TEMP DEBUG — remove this <pre> block after confirming data flows #}
+                                <details style="margin-bottom:14px;">
+                                  <summary style="font-size:11px;color:#94a3b8;cursor:pointer;">Debug: raw SEO JSON</summary>
+                                  <pre style="font-size:10px;color:#475569;background:#f1f5f9;padding:10px;border-radius:6px;overflow:auto;max-height:180px;">{{ _seo | tojson(indent=2) if _seo else "NO SEO DATA — check tasks.py persistence and DB column seo_data" }}</pre>
+                                </details>
+                              
+                                {% if _seo and _seo.keys() | list | length > 0 %}
+                              
+                                  {# ── SEO Grade Banner ── #}
+                                  {% set _grade = _seo.get('grade') or _seo.get('seo_grade') or item.seo_grade or 'N/A' %}
+                                  {% set _score = _seo.get('score') or _seo.get('seo_score') or item.seo_score %}
+                                  {% set _grade_color = '#10b981' if _grade in ('A','B','Excellent','Good') else ('#f59e0b' if _grade in ('C','Needs Improvement') else '#ef4444') %}
+                                  {% set _grade_bg    = 'rgba(16,185,129,0.08)' if _grade in ('A','B','Excellent','Good') else ('rgba(245,158,11,0.08)' if _grade in ('C','Needs Improvement') else 'rgba(239,68,68,0.08)') %}
+                              
+                                  <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;background:#fff;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+                                    <div style="width:60px;height:60px;border-radius:50%;background:{{ _grade_bg }};border:3px solid {{ _grade_color }};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                                      <span style="font-size:22px;font-weight:800;color:{{ _grade_color }};font-family:var(--font-code);">{{ _grade }}</span>
+                                    </div>
+                                    <div>
+                                      <div style="font-size:16px;font-weight:700;color:#0f172a;">SEO Health Score</div>
+                                      <div style="font-size:13px;color:#64748b;">
+                                        {% if _score is not none %}{{ _score | round(1) }} / 100{% else %}Score not available{% endif %}
+                                      </div>
+                                    </div>
+                                  </div>
+                              
+                                  {# ── Key SEO Fields ── #}
+                                  <div style="display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:18px;">
+                              
+                                    {# Title #}
+                                    {% set _title = _seo.get('title') or _seo.get('page_title') %}
+                                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+                                      <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;"><i class="fa-solid fa-heading" style="margin-right:5px;color:#6366f1;"></i>Title Tag</div>
+                                      {% if _title %}
+                                        <div style="font-size:13px;color:#0f172a;font-weight:500;">{{ _title }}</div>
+                                        {% set _tlen = _title | length %}
+                                        <div style="font-size:11px;color:{% if _tlen >= 50 and _tlen <= 60 %}#10b981{% elif _tlen < 50 %}#f59e0b{% else %}#ef4444{% endif %};margin-top:4px;">{{ _tlen }} characters {% if _tlen >= 50 and _tlen <= 60 %}✓ Optimal{% elif _tlen < 50 %}⚠ Too short (aim 50-60){% else %}⚠ Too long (aim 50-60){% endif %}</div>
+                                      {% else %}
+                                        <div style="font-size:13px;color:#ef4444;font-weight:600;"><i class="fa-solid fa-circle-xmark"></i> Missing title tag</div>
+                                      {% endif %}
+                                    </div>
+                              
+                                    {# Meta Description #}
+                                    {% set _desc = _seo.get('meta_description') or _seo.get('description') %}
+                                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+                                      <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;"><i class="fa-solid fa-align-left" style="margin-right:5px;color:#6366f1;"></i>Meta Description</div>
+                                      {% if _desc %}
+                                        <div style="font-size:12px;color:#334155;line-height:1.5;">{{ _desc }}</div>
+                                        {% set _dlen = _desc | length %}
+                                        <div style="font-size:11px;color:{% if _dlen >= 120 and _dlen <= 160 %}#10b981{% elif _dlen < 120 %}#f59e0b{% else %}#ef4444{% endif %};margin-top:4px;">{{ _dlen }} characters {% if _dlen >= 120 and _dlen <= 160 %}✓ Optimal{% elif _dlen < 120 %}⚠ Too short (aim 120-160){% else %}⚠ Too long (aim 120-160){% endif %}</div>
+                                      {% else %}
+                                        <div style="font-size:13px;color:#ef4444;font-weight:600;"><i class="fa-solid fa-circle-xmark"></i> Missing meta description</div>
+                                      {% endif %}
+                                    </div>
+                              
+                                    {# Headings #}
+                                    {% set _h1s = _seo.get('h1_count') or _seo.get('h1s') %}
+                                    {% set _h2s = _seo.get('h2_count') or _seo.get('h2s') %}
+                                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+                                      <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;"><i class="fa-solid fa-list-ol" style="margin-right:5px;color:#6366f1;"></i>Heading Structure</div>
+                                      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                                        <span style="background:#f1f5f9;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">H1: {% if _h1s is not none %}{{ _h1s }}{% else %}—{% endif %}</span>
+                                        <span style="background:#f1f5f9;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;">H2: {% if _h2s is not none %}{{ _h2s }}{% else %}—{% endif %}</span>
+                                        {% if _h1s is not none and _h1s != 1 %}
+                                        <span style="background:rgba(245,158,11,0.1);color:#d97706;padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;">⚠ Should have exactly 1 H1</span>
+                                        {% endif %}
+                                      </div>
+                                    </div>
+                              
+                                    {# Images without Alt #}
+                                    {% set _img_missing = _seo.get('images_missing_alt') or _seo.get('missing_alt_count') %}
+                                    {% if _img_missing is not none %}
+                                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+                                      <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;"><i class="fa-solid fa-image" style="margin-right:5px;color:#6366f1;"></i>Images Missing Alt Text</div>
+                                      <div style="font-size:18px;font-weight:800;color:{% if _img_missing == 0 %}#10b981{% else %}#ef4444{% endif %};font-family:var(--font-code);">{{ _img_missing }}</div>
+                                    </div>
+                                    {% endif %}
+                              
+                                    {# Canonical #}
+                                    {% set _canonical = _seo.get('canonical_url') or _seo.get('canonical') %}
+                                    {% if _canonical is not none %}
+                                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+                                      <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px;"><i class="fa-solid fa-link" style="margin-right:5px;color:#6366f1;"></i>Canonical URL</div>
+                                      {% if _canonical %}
+                                        <div style="font-size:11px;color:#6366f1;font-family:var(--font-code);word-break:break-all;">{{ _canonical }}</div>
+                                      {% else %}
+                                        <div style="font-size:12px;color:#f59e0b;font-weight:600;">⚠ No canonical tag found</div>
+                                      {% endif %}
+                                    </div>
+                                    {% endif %}
+                              
+                                    {# Open Graph #}
+                                    {% set _og = _seo.get('og_tags') or _seo.get('open_graph') %}
+                                    {% if _og %}
+                                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+                                      <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;"><i class="fa-brands fa-facebook" style="margin-right:5px;color:#6366f1;"></i>Open Graph Tags</div>
+                                      {% if _og is mapping %}
+                                        {% for k, v in _og.items() %}
+                                        <div style="display:flex;gap:8px;font-size:11px;padding:4px 0;border-bottom:1px solid #f1f5f9;">
+                                          <span style="color:#94a3b8;min-width:100px;font-weight:600;">{{ k }}</span>
+                                          <span style="color:#334155;word-break:break-all;">{{ v }}</span>
+                                        </div>
+                                        {% endfor %}
+                                      {% else %}
+                                        <span style="font-size:12px;color:#10b981;font-weight:600;"><i class="fa-solid fa-check"></i> Open Graph tags present</span>
+                                      {% endif %}
+                                    </div>
+                                    {% endif %}
+                              
+                                    {# Issues list #}
+                                    {% set _issues = _seo.get('issues') or _seo.get('seo_issues') or [] %}
+                                    {% if _issues %}
+                                    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;">
+                                      <div style="font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:5px;color:#ef4444;"></i>SEO Issues ({{ _issues | length }})</div>
+                                      {% for issue in _issues[:10] %}
+                                        <div style="display:flex;gap:8px;padding:7px 0;border-bottom:1px solid #f8fafc;font-size:12px;">
+                                          {% set _isev = (issue.severity if issue is mapping else 'medium') | lower %}
+                                          <span style="color:{% if _isev == 'high' or _isev == 'critical' %}#ef4444{% elif _isev == 'medium' %}#f59e0b{% else %}#94a3b8{% endif %};flex-shrink:0;font-size:11px;font-weight:700;text-transform:uppercase;width:55px;">{{ _isev }}</span>
+                                          <span style="color:#334155;">{{ issue.message if issue is mapping else issue }}</span>
+                                        </div>
+                                      {% endfor %}
+                                      {% if _issues | length > 10 %}<div style="font-size:11px;color:#94a3b8;margin-top:6px;">... and {{ _issues | length - 10 }} more</div>{% endif %}
+                                    </div>
+                                    {% endif %}
+                              
+                                  </div>
+                              
+                                {% else %}
+                                  <div style="text-align:center;padding:48px 20px;color:#94a3b8;">
+                                    <i class="fa-solid fa-magnifying-glass" style="font-size:32px;opacity:0.2;display:block;margin-bottom:12px;"></i>
+                                    <div style="font-size:14px;font-weight:600;color:#475569;margin-bottom:6px;">No SEO data available</div>
+                                    <div style="font-size:12px;">SEO data is collected during scanning. Re-run the scan to populate this tab.</div>
+                                  </div>
+                                {% endif %}
+                              
+                            </div><!-- /tab-content-seo -->
+                          </div><!-- /modal-right -->
+                        </div><!-- /modal-split -->
+                      </div><!-- /source-N -->
+                      {% endfor %} {% endif %}
+                    </div>
 
     <script>
       // ── Filter Logic ───────────────────────────────
@@ -4083,7 +4445,13 @@
         if (targetPane) {
           targetPane.classList.add("active");
           // UI tab needs flex layout; all others use block
-          targetPane.style.display = tabName === "ui" ? "flex" : "block";
+          if (tabName === "ui") {
+            targetPane.style.display = "flex";
+          } else {
+            targetPane.style.display = "block";
+            targetPane.style.flex = "1";
+            targetPane.style.minHeight = "0";
+          }
         }
         const targetBtn = contentArea.querySelector(
           `#tab-btn-${tabName}-${index}`,

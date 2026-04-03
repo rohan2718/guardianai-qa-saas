@@ -22,6 +22,10 @@ import time
 from datetime import datetime, UTC
 from urllib.parse import urlparse, urlunparse
 
+
+from engines.form_analyzer import analyze_all_forms
+from confidence_engine import enrich_page_with_ai_fields, compute_run_confidence
+from engines.seo_engine import capture_seo_data, compute_seo_score
 import pandas as pd
 from playwright.async_api import async_playwright
 
@@ -47,7 +51,7 @@ os.makedirs("raw", exist_ok=True)
 
 VALID_FILTERS = frozenset({
     "ui_elements", "form_validation", "functional",
-    "accessibility", "performance", "security",
+    "accessibility", "performance", "security", "seo",
 })
 
 # Asset extensions that should never count as broken navigation links
@@ -965,6 +969,14 @@ async def crawl_site(
                     security_raw = await capture_security_data(page, response, current_url)
                 except Exception as e:
                     logger.warning(f"Security capture failed {current_url}: {e}")
+                    
+            # ── SEO Audit ─────────────────────────────────────────────────────
+            seo_raw = {}
+            if _filter_active(active_filters, "seo") or not active_filters:
+                try:
+                    seo_raw = await capture_seo_data(page, current_url)
+                except Exception as e:
+                    logger.warning(f"SEO capture failed {current_url}: {e}")
 
             # ── Screenshot ─────────────────────────────────────────────────
             screenshot_path = f"screenshots/run_{run_id}_{int(time.time()*1000)}.png"
@@ -1016,6 +1028,7 @@ async def crawl_site(
             perf_score_data  = compute_performance_score(perf_raw)  if perf_raw  else {}
             a11y_score_data  = compute_accessibility_score(a11y_raw) if a11y_raw  else {}
             sec_score_data   = compute_security_score(security_raw)  if security_raw else {}
+            seo_score_data   = compute_seo_score(seo_raw)           if seo_raw   else {}
 
             analyzed_forms   = analyze_all_forms(dom_data.get("forms", []))
 
@@ -1094,6 +1107,18 @@ async def crawl_site(
                 "security_score": sec_score_data.get("score"),
                 "security_risk":  sec_score_data.get("risk_level"),
                 "is_https":       (security_raw or {}).get("is_https"),
+                
+                
+                # SEO — embed score inside seo_data so template can read both _seo.get("score") and _seo.get("seo_score")
+                "seo_data":  {
+                    **(seo_raw or {}),
+                    "score":     seo_score_data.get("score"),
+                    "grade":     seo_score_data.get("grade"),
+                    "seo_score": seo_score_data.get("score"),
+                    "seo_grade": seo_score_data.get("grade"),
+                },
+                "seo_score": seo_score_data.get("score"),
+                "seo_grade": seo_score_data.get("grade"),
 
                 # Functional — broken links separated
                 "broken_navigation_links": [l for l in link_data.get("broken_navigation_links", [])if isinstance(l, dict) and l.get("url")],
@@ -1112,6 +1137,8 @@ async def crawl_site(
 
                 # Screenshot
                 "screenshot": screenshot_path,
+                
+                
             }
 
             # ── Compute health score ───────────────────────────────────────

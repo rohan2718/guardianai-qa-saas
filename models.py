@@ -106,7 +106,7 @@ class TestRun(db.Model):
 
     # Scan filters — native JSONB
     scan_filters = db.Column(JSONB, nullable=True)
-
+ 
     # File paths
     report_file       = db.Column(db.String(255))
     summary_file      = db.Column(db.String(255))
@@ -220,6 +220,9 @@ class PageResult(db.Model):
 
     # UI summary — compact JSONB
     ui_summary = db.Column(JSONB, nullable=True)
+    seo_data  = db.Column(JSONB,            nullable=True)
+    seo_score = db.Column(db.Float,         nullable=True)
+    seo_grade = db.Column(db.String(10),    nullable=True)
 
 
 # ── AuditLog ──────────────────────────────────────────────────────────────────

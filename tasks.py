@@ -4,6 +4,8 @@ RQ-enqueued scan job. Runs the crawler, persists all results to DB.
 FIX: deprecated Session.query.get() → Session.get()
 FIX: scan_filters stored/read as native JSONB (list), not JSON string
 FIX: AI summary generation wrapped with timeout
+FIX: seo_data persisted to PageResult
+FIX: duplicate URL guard before bulk insert
 """
 
 import asyncio
@@ -28,9 +30,9 @@ def run_qa_pipeline(run_id: int, page_data: list, target_url: str = "") -> dict:
     """
     Full autonomous QA pipeline:
       Step 1 — Discover flows
-      Step 2 — Generate test cases  [written as "pending" to DB]
+      Step 2 — Generate test cases
       Step 3 — Execute test cases with Playwright
-      Step 4 — Validate + update QATestCase status (pass/fail/skip)
+      Step 4 — Validate + update QATestCase status
       Step 5 — Bug reports from scan findings + test failures
       Step 6 — KPI scores from page data + test results
     """
@@ -215,10 +217,6 @@ def run_qa_pipeline(run_id: int, page_data: list, target_url: str = "") -> dict:
 
 
 def _run_tests_sync(test_cases: list[dict], run_id: int, target_url: str) -> list[dict]:
-    """
-    Runs the async test runner in a dedicated event loop (safe for RQ workers).
-    Returns a list of execution result dicts.
-    """
     import asyncio
     from playwright.async_api import async_playwright
     from engines.test_runner import run_all_test_cases
@@ -265,12 +263,6 @@ def _run_tests_sync(test_cases: list[dict], run_id: int, target_url: str) -> lis
 
 
 def _persist_deep_qa_results(run_id: int, results: list) -> None:
-    """
-    Persist DeepQA results to DB:
-      - Each page result → stored in PageResult.ui_summary JSONB under "deep_qa" key
-      - Each FAIL → BugReport row (source="deep_qa")
-      - TestRun aggregate totals updated
-    """
     if not results:
         return
 
@@ -297,15 +289,11 @@ def _persist_deep_qa_results(run_id: int, results: list) -> None:
                     if qa_score is not None:
                         deep_qa_scores.append(qa_score)
 
-                    # ── Store in PageResult.ui_summary JSONB ──────────────────
                     pr = PageResult.query.filter_by(
                         run_id=run_id,
                         url=data.get("page_url"),
                     ).first()
                     if pr:
-                        # CRITICAL: create a NEW dict (not in-place mutation).
-                        # SQLAlchemy does not detect in-place JSONB mutations.
-                        # Assigning the same dict object back silently skips the UPDATE.
                         from sqlalchemy.orm.attributes import flag_modified
                         new_summary = dict(pr.ui_summary or {})
                         new_summary["deep_qa"] = {
@@ -322,9 +310,8 @@ def _persist_deep_qa_results(run_id: int, results: list) -> None:
                             "spell_check":       data.get("spell_check", {}),
                         }
                         pr.ui_summary = new_summary
-                        flag_modified(pr, "ui_summary")  # force SQLAlchemy to include in UPDATE
+                        flag_modified(pr, "ui_summary")
 
-                    # ── Create BugReport for each failure ─────────────────────
                     for bug in data.get("bugs", []):
                         try:
                             db.session.add(BugReport(
@@ -348,7 +335,6 @@ def _persist_deep_qa_results(run_id: int, results: list) -> None:
                 except Exception as page_err:
                     logger.warning(f"[DeepQA persist] Page result error: {page_err}")
 
-            # ── Update TestRun aggregates ──────────────────────────────────────
             try:
                 run_obj = db.session.get(TestRun, run_id)
                 if run_obj:
@@ -382,6 +368,51 @@ def _persist_deep_qa_results(run_id: int, results: list) -> None:
             logger.error(f"[DeepQA persist] Fatal error for run {run_id}: {e}", exc_info=True)
 
 
+def _build_seo_jsonb(seo_raw: dict) -> dict | None:
+    """
+    Normalises raw SEO data from seo_engine into a clean JSONB-safe dict.
+    Ensures 'grade', 'score', 'seo_grade', and 'seo_score' keys always exist
+    at the top level so the Jinja2 template can reliably read them regardless
+    of which key variant it tries.
+    Returns None if seo_raw is empty or errored.
+    """
+    if not seo_raw or seo_raw.get("_error"):
+        return None
+
+    # Normalise score — support both key variants
+    score = (
+        seo_raw.get("score")
+        or seo_raw.get("seo_score")
+    )
+
+    # Normalise grade — support both key variants
+    grade = (
+        seo_raw.get("grade")
+        or seo_raw.get("seo_grade")
+        or _derive_grade(score)
+    )
+
+    return {
+        **seo_raw,
+        # Write all four variants so template lookups never miss
+        "score":     score,
+        "grade":     grade,
+        "seo_score": score,
+        "seo_grade": grade,
+    }
+
+
+def _derive_grade(score) -> str:
+    if score is None:
+        return "N/A"
+    s = float(score)
+    if s >= 90: return "A"
+    if s >= 80: return "B"
+    if s >= 70: return "C"
+    if s >= 60: return "D"
+    return "F"
+
+
 def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: list = None):
     """
     RQ-enqueued job. Progress, ETA, and discovered_pages updated incrementally.
@@ -395,7 +426,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             return
         run.status     = "running"
         run.started_at = datetime.now(UTC)
-        # scan_filters is now JSONB — store as list directly
         if active_filters:
             run.scan_filters = active_filters
         db.session.commit()
@@ -449,7 +479,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                 db.session.commit()
         return
 
-    # ── Handle pre-flight failure returned from crawler ───────────────────────
     if result.get("status") == "target_unreachable":
         error_msg = result.get("error_detail", "Target server could not be reached.")
         logger.warning(f"[run {run_id}] Marking as target_unreachable: {error_msg}")
@@ -464,7 +493,7 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
         return
 
     # ── Persist results ────────────────────────────────────────────────────────
-    _deep_qa_page_urls = []  # populated inside context, used outside
+    _deep_qa_page_urls = []
 
     try:
         import os as _os
@@ -474,7 +503,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
         component_avgs = site_health.get("component_averages") or {}
         score_dist     = site_health.get("score_distribution") or {}
 
-        # ── Accumulate aggregate counters from raw page data ─────────────────
         total_a11y   = 0
         total_broken = 0
         total_js_err = 0
@@ -498,7 +526,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             if lt > 3:
                 slow_pages += 1
 
-        # ── Read AI summary text from file ───────────────────────────────────
         ai_summary_text = None
         ai_summary_html = None
         summary_file_path = result.get("summary_file")
@@ -518,7 +545,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                 logger.error(f"TestRun {run_id} disappeared before final persist")
                 return
 
-            # Populate aggregate fields
             run.total_tests   = result.get("total", 0)
             run.passed        = result.get("passed", 0)
             run.failed        = result.get("failed", 0)
@@ -553,7 +579,13 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             run.ai_summary      = ai_summary_text
             run.ai_summary_html = ai_summary_html
 
-            # Build PageResult objects in-session before any commit
+            # ── Pre-query existing URLs to prevent duplicates ─────────────────
+            existing_urls = {
+                r[0] for r in db.session.query(PageResult.url)
+                .filter(PageResult.run_id == run_id).all()
+            }
+            logger.info(f"[run {run_id}] {len(existing_urls)} URLs already in DB before insert")
+
             try:
                 existing_patterns: dict = {}
                 from sqlalchemy import text as _text
@@ -574,12 +606,31 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
 
             page_records = []
             for p in pages:
+                page_url = p.get("url")
+                if not page_url:
+                    continue
+
+                # ── Duplicate guard ────────────────────────────────────────────
+                if page_url in existing_urls:
+                    logger.debug(f"[dedup] Skipping duplicate URL in batch: {page_url}")
+                    continue
+                existing_urls.add(page_url)  # guard within-batch duplicates too
+
                 try:
                     pattern_id  = p.get("failure_pattern_id")
                     similar_ref = existing_patterns.get(pattern_id) if pattern_id else None
+
+                    # ── Extract SEO data safely ────────────────────────────────
+                    raw_seo   = p.get("seo_data") or {}
+                    seo_jsonb = _build_seo_jsonb(raw_seo)
+                    # Use the normalised jsonb dict so score/grade are always resolved
+                    _seo_norm = seo_jsonb or {}
+                    seo_score = _seo_norm.get("score") or _seo_norm.get("seo_score")
+                    seo_grade = _seo_norm.get("grade") or _seo_norm.get("seo_grade") or _derive_grade(seo_score)
+
                     page_records.append(PageResult(
                         run_id=run_id,
-                        url=p.get("url"),
+                        url=page_url,
                         title=p.get("title"),
                         scanned_at=datetime.now(UTC),
                         status=p.get("status"),
@@ -607,11 +658,14 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                         is_https=p.get("is_https"),
                         screenshot_path=p.get("screenshot"),
                         ui_summary=p.get("ui_summary"),
+                        # ── SEO fields ──────────────────────────────────────────
+                        seo_data=seo_jsonb,
+                        seo_score=float(seo_score) if seo_score is not None else None,
+                        seo_grade=seo_grade,
                     ))
                 except Exception as e:
-                    logger.warning(f"Skipping page record for {p.get('url')}: {e}")
+                    logger.warning(f"Skipping page record for {page_url}: {e}")
 
-            # Add all page records to session (no intermediate commit)
             if page_records:
                 db.session.bulk_save_objects(page_records)
 
@@ -653,8 +707,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
             except Exception as qa_err:
                 logger.error(f"QA pipeline error (non-fatal): {qa_err}", exc_info=True)
 
-            # ── COMMIT completed IMMEDIATELY — UI reloads, user sees results ──
-            # DeepQA runs AFTER in its own isolated context (no nested session bug)
             try:
                 run.status      = "completed"
                 run.finished_at = datetime.now(UTC)
@@ -669,7 +721,6 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                     run2.finished_at = datetime.now(UTC)
                     db.session.commit()
 
-            # Capture URLs before the outer context closes
             _deep_qa_page_urls = [p["url"] for p in pages if p.get("url")]
 
     except Exception as e:
@@ -680,13 +731,9 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
                 run.status      = "failed"
                 run.finished_at = datetime.now(UTC)
                 db.session.commit()
-        return  # Don't run DeepQA if main scan failed
+        return
 
-    # ══════════════════════════════════════════════════════════════════════════
-    # DEEP QA — completely outside the main try/except, in its own fresh context.
-    # _persist_deep_qa_results has its OWN with app.app_context() — no nesting.
-    # This eliminates the SQLAlchemy session invalidation bug entirely.
-    # ══════════════════════════════════════════════════════════════════════════
+    # ── DEEP QA ────────────────────────────────────────────────────────────────
     try:
         from engines.deep_qa_engine import run_deep_qa
         from playwright.async_api import async_playwright as _async_playwright
@@ -730,12 +777,18 @@ def run_scan(run_id: int, url: str, page_limit, user_id: int, active_filters: li
 def _persist_page_results(run_id: int, pages: list):
     """
     Persists per-page PageResult records to DB.
-    This is the primary data source for the paginated pages API.
+    Includes duplicate URL guard and SEO fields.
     """
     if not pages:
         return
 
     with app.app_context():
+        # ── Pre-query existing URLs to prevent duplicates ──────────────────────
+        existing_urls = {
+            r[0] for r in db.session.query(PageResult.url)
+            .filter(PageResult.run_id == run_id).all()
+        }
+
         existing_patterns: dict = {}
         try:
             from sqlalchemy import text
@@ -755,13 +808,29 @@ def _persist_page_results(run_id: int, pages: list):
 
         records = []
         for p in pages:
+            page_url = p.get("url")
+            if not page_url:
+                continue
+
+            # ── Duplicate guard ────────────────────────────────────────────────
+            if page_url in existing_urls:
+                logger.debug(f"[dedup] _persist_page_results skipping duplicate: {page_url}")
+                continue
+            existing_urls.add(page_url)
+
             try:
                 pattern_id  = p.get("failure_pattern_id")
                 similar_ref = existing_patterns.get(pattern_id) if pattern_id else None
 
+                raw_seo   = p.get("seo_data") or {}
+                seo_jsonb = _build_seo_jsonb(raw_seo)
+                _seo_norm = seo_jsonb or {}
+                seo_score = _seo_norm.get("score") or _seo_norm.get("seo_score")
+                seo_grade = _seo_norm.get("grade") or _seo_norm.get("seo_grade") or _derive_grade(seo_score)
+
                 records.append(PageResult(
                     run_id=run_id,
-                    url=p.get("url"),
+                    url=page_url,
                     title=p.get("title"),
                     scanned_at=datetime.now(UTC),
                     status=p.get("status"),
@@ -789,9 +858,12 @@ def _persist_page_results(run_id: int, pages: list):
                     is_https=p.get("is_https"),
                     screenshot_path=p.get("screenshot"),
                     ui_summary=p.get("ui_summary"),
+                    seo_data=seo_jsonb,
+                    seo_score=float(seo_score) if seo_score is not None else None,
+                    seo_grade=seo_grade,
                 ))
             except Exception as e:
-                logger.warning(f"Skipping page result for {p.get('url')}: {e}")
+                logger.warning(f"Skipping page result for {page_url}: {e}")
 
         try:
             db.session.bulk_save_objects(records)
@@ -803,10 +875,6 @@ def _persist_page_results(run_id: int, pages: list):
 
 
 def _run_ai_summary_with_timeout(page_data: list, timeout: int = AI_SUMMARY_TIMEOUT) -> str:
-    """
-    Runs AI summary generation with a hard timeout.
-    Falls back to basic_summary() if Cohere is slow or unavailable.
-    """
     from ai_analyzer import analyze_site, basic_summary
 
     def _call():

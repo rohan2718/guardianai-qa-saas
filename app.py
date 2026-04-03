@@ -85,11 +85,20 @@ db.init_app(app)
 
 csrf = CSRFProtect(app)
 
+try:
+    _test_redis = redis.Redis.from_url(config.REDIS_URL, socket_connect_timeout=2)
+    _test_redis.ping()
+    _limiter_storage = config.REDIS_URL
+    logger.info("Limiter using Redis storage")
+except Exception:
+    _limiter_storage = "memory://"
+    logger.warning("Redis unavailable — Limiter falling back to memory storage")
+
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=[],           # No global limit — apply per-route
-    storage_uri=config.REDIS_URL,
+    default_limits=[],
+    storage_uri=_limiter_storage,
 )
 
 login_manager = LoginManager()
@@ -163,6 +172,7 @@ SCAN_FILTER_DEFS = [
     {"key": "accessibility",   "label": "Accessibility",   "group": "Compliance",  "desc": "ARIA, alt text, keyboard nav, color contrast, screen reader"},
     {"key": "performance",     "label": "Performance",     "group": "Performance", "desc": "Load time, FCP, LCP, unused JS/CSS, image optimization"},
     {"key": "security",        "label": "Security",        "group": "Security",    "desc": "HTTPS, mixed content, CSP, XSS patterns, CSRF"},
+    {"key": "seo",             "label": "SEO Audit",       "group": "SEO",         "desc": "Title, meta description, headings, OG tags, canonical, structured data"},
 ]
 
 VALID_FILTER_KEYS = {f["key"] for f in SCAN_FILTER_DEFS}
@@ -176,6 +186,7 @@ FILTER_ICONS = {
     "accessibility":   "fa-solid fa-universal-access",
     "performance":     "fa-solid fa-gauge-high",
     "security":        "fa-solid fa-shield-halved",
+    "seo":             "fa-solid fa-magnifying-glass-chart",
 }
 
 # ── Pagination defaults ────────────────────────────────────────────────────────
@@ -334,31 +345,64 @@ def is_safe_scan_url(url: str) -> tuple[bool, str]:
         return False, "Scanning reserved IP ranges is not allowed."
 
     return True, ""
+
+
+def _build_seo_dict(seo_data_col, seo_score_col) -> dict:
+    """
+    Builds the seo_data dict for template rendering.
+    Returns {} if no real SEO data exists — allows raw JSON fallback to fire.
+    """
+    base = seo_data_col or {}
+    # If base has actual SEO keys (not just score metadata), it's real data
+    real_keys = {"title", "meta_description", "h1_count", "total_issues",
+                 "total_warnings", "total_passed", "issues", "warnings", "passed"}
+    if not base or not any(k in base for k in real_keys):
+        # No real SEO data in DB — return empty so raw JSON fallback triggers
+        return {}
+    # Real data exists — inject computed score/grade
+    return {
+        **base,
+        "seo_score": seo_score_col,
+        "seo_grade": base.get("seo_grade"),
+    }
 # ── Run context builder ────────────────────────────────────────────────────────
-def enrich_run_context(run: TestRun) -> dict:
+def enrich_run_context(run):
     """
     Builds template context for a completed run.
-
-    DATA SOURCES (in priority order):
-      1. raw_data   → PageResult DB rows (DB-first, no file I/O)
-                      Falls back to raw JSON file only if no DB rows exist
-                      (handles scans completed before this fix was deployed).
-      2. ai_insight → TestRun.ai_summary_html column (DB-first)
-                      Falls back to summary_file if column is empty.
-      3. metrics    → generate_metrics_from_run() — always from DB columns.
-      4. site_health→ Reconstructed from TestRun columns — no JSON file needed.
+    FIX: seo_data / seo_score / seo_grade now included in every page dict.
+    FIX: duplicate URL guard added.
     """
+    import os, json, logging, markdown
+    logger = logging.getLogger(__name__)
+ 
     raw_data    = []
     ai_insight  = None
     site_health = None
-
+ 
     metrics = generate_metrics_from_run(run) if run.status == "completed" else {}
-
-    # ── 1. raw_data: DB-first via PageResult, augmented with modal detail ───────
+ 
+    # ── 1. raw_data: DB-first via PageResult ─────────────────────────────────
     db_rows = PageResult.query.filter_by(run_id=run.id).order_by(PageResult.id.asc()).all()
-
+ 
+    # DEBUG — remove after confirming SEO data flows end-to-end
     if db_rows:
-        # Build base raw_data from DB rows (all score/metric fields)
+        first = db_rows[0]
+        print(f"[SEO DEBUG] run={run.id} first_url={first.url} "
+              f"seo_score={first.seo_score} seo_grade={first.seo_grade} "
+              f"seo_data_keys={list((first.seo_data or {}).keys())} "
+              f"has_score_key={'score' in (first.seo_data or {})} "
+              f"has_grade_key={'grade' in (first.seo_data or {})}")
+ 
+    # ── Deduplicate DB rows by URL (safety guard) ─────────────────────────────
+    seen_urls    = set()
+    unique_rows  = []
+    for r in db_rows:
+        if r.url and r.url not in seen_urls:
+            seen_urls.add(r.url)
+            unique_rows.append(r)
+    db_rows = unique_rows
+ 
+    if db_rows:
         raw_data = [
             {
                 "url":                     r.url,
@@ -376,21 +420,22 @@ def enrich_run_context(run: TestRun) -> dict:
                 "security_score":          r.security_score,
                 "functional_score":        r.functional_score,
                 "ui_form_score":           r.ui_form_score,
-                "load_time": r.load_time if r.load_time is not None else None,  # leave as-is
+                "load_time": r.load_time if r.load_time is not None else None,
                 "fcp_ms":                  r.fcp_ms,
                 "lcp_ms":                  r.lcp_ms,
                 "ttfb_ms":                 r.ttfb_ms,
                 "accessibility_issues":    r.accessibility_issues,
-                # Keep full relative path — template uses src="/{{ item.screenshot }}"
-                # which needs "screenshots/filename.png", NOT just "filename.png"
                 "screenshot":              r.screenshot_path or None,
                 "ui_summary":              r.ui_summary or {},
+                # ── SEO FIELDS (THE KEY FIX) ──────────────────────────────────
+                "seo_data":                r.seo_data or {},
+                "seo_score":               r.seo_score,
+                "seo_grade":               r.seo_grade,
+                # ──────────────────────────────────────────────────────────────
                 "result":                  "pass" if (r.status or 200) < 400 else "fail",
-                # Counts from DB for page-row badges
                 "broken_navigation_links": [],
                 "js_errors":               [],
                 "is_https":                r.is_https,
-                # Deep Inspection modal fields — empty until augmented from raw JSON
                 "ui_elements":    [],
                 "forms":          [],
                 "broken_links":   [],
@@ -401,10 +446,8 @@ def enrich_run_context(run: TestRun) -> dict:
             }
             for r in db_rows
         ]
-
+ 
         # ── Augment modal-only fields from raw JSON file ──────────────────────
-        # ui_elements, forms, broken_links (with url+status objects), connected_pages
-        # are NOT stored in PageResult. Load once, merge by URL.
         if run.raw_file and os.path.exists(run.raw_file):
             try:
                 with open(run.raw_file, "r", encoding="utf-8") as fh:
@@ -419,29 +462,53 @@ def enrich_run_context(run: TestRun) -> dict:
                     if rp:
                         row["ui_elements"]     = rp.get("ui_elements")  or []
                         row["forms"]           = rp.get("forms")        or []
-                        # Template uses item.broken_links as list of {url, status} objects
                         raw_bnl = rp.get("broken_navigation_links") or rp.get("broken_links") or []
-                        row["broken_links"] = [ {"url": lnk, "status": 404} if isinstance(lnk, str) else lnk for lnk in raw_bnl if lnk is not None]
+                        row["broken_links"] = [
+                            {"url": lnk, "status": 404} if isinstance(lnk, str) else lnk
+                            for lnk in raw_bnl if lnk is not None
+                        ]
                         row["connected_pages"] = rp.get("connected_pages") or []
                         row["dom_latency"]     = rp.get("dom_latency") or rp.get("load_time")
                         row["viewport"]        = rp.get("viewport") or "Desktop"
-                        # If screenshot missing from DB row, fill from raw JSON
                         if not row["screenshot"]:
                             row["screenshot"]  = rp.get("screenshot")
+                        # Also pull nav/sidebar for topology tab
+                        row["nav_menus"]       = rp.get("nav_menus") or []
+                        row["sidebar_links"]   = rp.get("sidebar_links") or []
+                        row["js_errors"]       = rp.get("js_errors") or []
+                        row["broken_navigation_links"] = [
+                            lnk for lnk in (rp.get("broken_navigation_links") or [])
+                            if lnk is not None
+                        ]
+                        row["failed_assets"]           = rp.get("failed_assets") or []
+                        row["third_party_failures"]    = rp.get("third_party_failures") or []
+                        row["resource_errors"]         = rp.get("resource_errors") or []
+                        # If raw JSON has richer seo_data, prefer it
+                        if rp.get("seo_data") and not row.get("seo_data"):
+                            row["seo_data"]  = rp.get("seo_data") or {}
+                            row["seo_score"] = rp.get("seo_score")
+                            row["seo_grade"] = rp.get("seo_grade")
             except Exception as exc:
                 logger.warning("enrich_run_context: modal augment failed %s — %s", run.raw_file, exc)
-
+ 
     else:
         # Fallback: everything from raw JSON (legacy scans before DB patch)
         if run.raw_file and os.path.exists(run.raw_file):
             try:
                 with open(run.raw_file, "r", encoding="utf-8") as fh:
                     loaded = json.load(fh)
-                raw_data = loaded if isinstance(loaded, list) else []
-                # Normalize all page objects loaded from raw file
-                for _pg in raw_data:
+                raw_pages_all = loaded if isinstance(loaded, list) else []
+ 
+                # Deduplicate by URL
+                seen_fallback = set()
+                raw_data = []
+                for _pg in raw_pages_all:
                     if not isinstance(_pg, dict):
                         continue
+                    _url = _pg.get("url")
+                    if not _url or _url in seen_fallback:
+                        continue
+                    seen_fallback.add(_url)
                     for _lf in ("ui_elements","forms","broken_navigation_links","broken_links",
                                 "failed_assets","third_party_failures","js_errors",
                                 "connected_pages","nav_menus","sidebar_links",
@@ -452,33 +519,38 @@ def enrich_run_context(run: TestRun) -> dict:
                         elif isinstance(v, list):
                             _pg[_lf] = [x for x in v if x is not None]
                     for _df in ("ui_summary","breadcrumbs","sidebar","performance_metrics",
-                                "accessibility_data","security_data"):
+                                "accessibility_data","security_data","seo_data"):
                         if _pg.get(_df) is None:
                             _pg[_df] = {}
+                    # Ensure seo keys exist at top level
+                    if not _pg.get("seo_score"):
+                        _pg["seo_score"] = (_pg.get("seo_data") or {}).get("score")
+                    if not _pg.get("seo_grade"):
+                        _pg["seo_grade"] = (_pg.get("seo_data") or {}).get("grade")
+                    raw_data.append(_pg)
+ 
             except Exception as exc:
                 logger.warning("enrich_run_context: fallback raw file load failed %s — %s", run.raw_file, exc)
-
-    # ── 2. AI insight: DB column first ───────────────────────────────────────
+ 
+    # ── 2. AI insight ──────────────────────────────────────────────────────────
     if run.ai_summary_html:
-        ai_insight = run.ai_summary_html  # already HTML from tasks.py FIX4
+        ai_insight = run.ai_summary_html
     elif run.ai_summary:
         ai_insight = markdown.markdown(run.ai_summary)
     else:
-        # Fallback to file for legacy scans
         if run.summary_file and os.path.exists(run.summary_file):
             try:
                 with open(run.summary_file, "r", encoding="utf-8") as fh:
                     raw_txt = fh.read()
                 if raw_txt:
                     ai_insight = markdown.markdown(raw_txt)
-                    # Backfill DB so next load is instant
                     run.ai_summary      = raw_txt
                     run.ai_summary_html = ai_insight
                     db.session.commit()
             except Exception as exc:
                 logger.warning("enrich_run_context: fallback summary file load failed %s — %s", run.summary_file, exc)
-
-    # ── 3. Site health: reconstruct from TestRun columns (no file I/O) ───────
+ 
+    # ── 3. Site health ─────────────────────────────────────────────────────────
     if run.site_health_score is not None:
         site_health = {
             "site_health_score": run.site_health_score,
@@ -492,10 +564,10 @@ def enrich_run_context(run: TestRun) -> dict:
                 "ui_form":       run.avg_ui_form_score,
             },
         }
-
+ 
     active_filters = run.scan_filters or []
     return {
-        "data":             [],           # legacy field — raw_data is the live source
+        "data":             [],
         "ai_insight":       ai_insight,
         "metrics":          metrics,
         "raw_data":         raw_data,
@@ -506,7 +578,6 @@ def enrich_run_context(run: TestRun) -> dict:
         "filter_icons":     FILTER_ICONS,
         "intel":            {},
     }
-
 # ── Progress payload builder ───────────────────────────────────────────────────
 
 def _progress_payload(run: TestRun) -> dict:
@@ -994,30 +1065,30 @@ def api_run_progress(run_id):
 @app.route("/api/run/<int:run_id>/pages/paginated")
 @login_required
 @csrf.exempt
-def run_pages_paginated(run_id):
+def run_pages_paginated_REPLACEMENT(run_id):
     """
     Returns paginated per-page results from the PageResult DB table.
-    LIMIT/OFFSET pagination — no full JSON file loaded into memory.
+    FIX: seo_data / seo_score / seo_grade now included in response.
     """
     run = db.session.get(TestRun, run_id)
     if not run:
         abort(404)
     if run.user_id != current_user.id:
         abort(403)
-
+ 
     page     = request.args.get("page",     1,                type=int)
     per_page = request.args.get("per_page", DEFAULT_PAGE_SIZE, type=int)
     if per_page not in ALLOWED_PAGE_SIZES:
         per_page = DEFAULT_PAGE_SIZE
-
+ 
     risk_filter = request.args.get("risk", "all")
     sort_by     = request.args.get("sort", "health_asc")
-
+ 
     query = PageResult.query.filter_by(run_id=run_id)
-
+ 
     if risk_filter != "all":
         query = query.filter(PageResult.risk_category == risk_filter)
-
+ 
     sort_map = {
         "health_asc":  PageResult.health_score.asc().nullslast(),
         "health_desc": PageResult.health_score.desc().nullsfirst(),
@@ -1025,13 +1096,13 @@ def run_pages_paginated(run_id):
         "load_desc":   PageResult.load_time.desc().nullsfirst(),
     }
     query = query.order_by(sort_map.get(sort_by, PageResult.health_score.asc().nullslast()))
-
+ 
     total       = query.count()
     total_pages = max(1, (total + per_page - 1) // per_page)
     page        = max(1, min(page, total_pages))
-
+ 
     rows = query.offset((page - 1) * per_page).limit(per_page).all()
-
+ 
     page_summaries = [
         {
             "url":                     r.url,
@@ -1059,10 +1130,14 @@ def run_pages_paginated(run_id):
             "is_https":                r.is_https,
             "screenshot": os.path.basename(r.screenshot_path) if r.screenshot_path else None,
             "ui_summary":              r.ui_summary or {},
+            # ── SEO FIELDS ────────────────────────────────────────────────────
+            "seo_data":                r.seo_data or {},
+            "seo_score":               r.seo_score,
+            "seo_grade":               r.seo_grade,
         }
         for r in rows
     ]
-
+ 
     return jsonify({
         "pages":       page_summaries,
         "total":       total,
@@ -1070,6 +1145,7 @@ def run_pages_paginated(run_id):
         "per_page":    per_page,
         "total_pages": total_pages,
     })
+ 
 
 @app.route("/api/run/<int:run_id>/bugs")
 @login_required

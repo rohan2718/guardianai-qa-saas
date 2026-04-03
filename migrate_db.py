@@ -21,7 +21,6 @@ cur = conn.cursor()
 
 # ── All new columns for test_runs ──────────────────────────────────────────────
 migrations = [
-    # column_name,              data_type,              default
     ("discovered_pages",        "INTEGER",              "DEFAULT 0"),
     ("avg_scan_time_ms",        "FLOAT",                ""),
     ("eta_seconds",             "FLOAT",                ""),
@@ -78,7 +77,10 @@ try:
             js_errors_count         INTEGER,
             is_https                BOOLEAN,
             screenshot_path         VARCHAR(500),
-            ui_summary              JSONB
+            ui_summary              JSONB,
+            seo_data                JSONB,
+            seo_score               FLOAT,
+            seo_grade               VARCHAR(10)
         );
     """)
     conn.commit()
@@ -109,8 +111,11 @@ page_result_patches = [
     ("performance_score",       "FLOAT",      ""),
     ("risk_category",           "VARCHAR(50)", ""),
     ("health_score",            "FLOAT",      ""),
-    # ── Deep QA column (added for deep_qa_engine.py) ──────────────────────
     ("deep_qa_summary",         "JSONB",      ""),
+    # ── SEO columns ────────────────────────────────────────────────────────
+    ("seo_data",                "JSONB",      ""),
+    ("seo_score",               "FLOAT",      ""),
+    ("seo_grade",               "VARCHAR(10)", ""),
 ]
 
 for col, dtype, default in page_result_patches:
@@ -125,6 +130,40 @@ for col, dtype, default in page_result_patches:
     except Exception as e:
         conn.rollback()
         print(f"  ✗ Failed page_results.{col}: {e}")
+
+# ── Remove duplicate page_results rows before adding unique constraint ─────────
+print("\nCleaning duplicate page_results rows (run_id + url)...")
+try:
+    cur.execute("""
+        DELETE FROM page_results
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM page_results
+            GROUP BY run_id, url
+        );
+    """)
+    deleted = cur.rowcount
+    conn.commit()
+    print(f"  ✓ Removed {deleted} duplicate row(s)")
+except Exception as e:
+    conn.rollback()
+    print(f"  ✗ Cleanup failed: {e}")
+
+# ── Add UNIQUE constraint on (run_id, url) ─────────────────────────────────────
+print("\nAdding unique constraint on page_results(run_id, url)...")
+try:
+    cur.execute("""
+        ALTER TABLE page_results
+        ADD CONSTRAINT uq_page_results_run_url UNIQUE (run_id, url);
+    """)
+    conn.commit()
+    print("  ✓ Unique constraint added")
+except psycopg2.errors.DuplicateObject:
+    conn.rollback()
+    print("  — Constraint already exists")
+except Exception as e:
+    conn.rollback()
+    print(f"  ✗ Failed (check for remaining duplicates): {e}")
 
 cur.close()
 conn.close()
