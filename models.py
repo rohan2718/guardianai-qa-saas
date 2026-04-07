@@ -179,7 +179,7 @@ class PageResult(db.Model):
         db.Index("ix_pageresult_failure_pattern", "failure_pattern_id"),
         db.Index("ix_pageresult_run_risk",        "run_id", "risk_category"),
     )
-
+    
     id         = db.Column(db.Integer, primary_key=True)
     run_id     = db.Column(db.Integer, db.ForeignKey("test_runs.id"), nullable=False)
     url        = db.Column(db.String(1000))
@@ -222,8 +222,8 @@ class PageResult(db.Model):
     ui_summary = db.Column(JSONB, nullable=True)
     seo_data  = db.Column(JSONB,            nullable=True)
     seo_score = db.Column(db.Float,         nullable=True)
-    seo_grade = db.Column(db.String(10),    nullable=True)
-
+    seo_grade = db.Column(db.String(50), nullable=True)
+    
 
 # ── AuditLog ──────────────────────────────────────────────────────────────────
 

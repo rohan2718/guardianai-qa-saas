@@ -1234,6 +1234,18 @@ async def crawl_site(
 # ── Report Builder ─────────────────────────────────────────────────────────────
 
 async def build_reports(run_id: int, page_data: list, active_filters: list | None) -> dict:
+    """
+    Builds Excel report, raw JSON dump, AI summary, and site health aggregate.
+
+    FIX: page_health_list was previously built from pg.get("health_breakdown", {})
+         which is a flat components dict {"performance": x, ...}.
+         compute_site_health_score() expects {"health_score": x, "components": {...}}.
+         The mismatch meant site_health_score was always None and component_averages
+         were always None for every scan.
+
+    Fixed by constructing page_health_list directly from the per-page score
+    fields that ARE correctly populated on each page object.
+    """
     rows = []
     for pg in page_data:
         ui_s = pg.get("ui_summary") or {}
@@ -1250,7 +1262,7 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
             "Security Score":       pg.get("security_score"),
             "Functional Score":     pg.get("functional_score"),
             "UI/Form Score":        pg.get("ui_form_score"),
-            "Load Time (ms)":       pg.get("load_time"),
+            "Load Time (s)":        pg.get("load_time"),
             "FCP (ms)":             pg.get("fcp_ms"),
             "LCP (ms)":             pg.get("lcp_ms"),
             "TTFB (ms)":            pg.get("ttfb_ms"),
@@ -1259,7 +1271,7 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
             "Failed Assets":        len(pg.get("failed_assets") or []),
             "3rd Party Failures":   len(pg.get("third_party_failures") or []),
             "JS Errors":            len(pg.get("js_errors") or []),
-            "Resource Errors": len(pg.get("resource_errors") or []),
+            "Resource Errors":      len(pg.get("resource_errors") or []),
             "Redirect Chain":       pg.get("redirect_chain_length", 0),
             "Forms Count":          len(pg.get("forms") or []),
             "Buttons":              ui_s.get("buttons", 0),
@@ -1267,11 +1279,10 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
             "Images":               ui_s.get("images", 0),
             "Elements Found":       len(pg.get("ui_elements") or []),
             "Screenshot":           pg.get("screenshot"),
-            "JS Errors (High)": (pg.get("js_error_summary") or {}).get("high", 0),
-            "JS Errors (Medium)": (pg.get("js_error_summary") or {}).get("medium", 0),
-            "JS Errors (Low)": (pg.get("js_error_summary") or {}).get("low", 0),
-
-            "Resource Errors (Low)": (pg.get("resource_error_summary") or {}).get("low", 0),
+            "JS Errors (High)":     (pg.get("js_error_summary") or {}).get("high", 0),
+            "JS Errors (Medium)":   (pg.get("js_error_summary") or {}).get("medium", 0),
+            "JS Errors (Low)":      (pg.get("js_error_summary") or {}).get("low", 0),
+            "Resource Errors (Low)":(pg.get("resource_error_summary") or {}).get("low", 0),
         })
 
     df = pd.DataFrame(rows)
@@ -1287,9 +1298,28 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
     with open(summary_file, "w", encoding="utf-8") as f:
         f.write(analyze_site(page_data))
 
-    page_health_list = [pg.get("health_breakdown", {}) for pg in page_data]
-    site_health      = compute_site_health_score(page_health_list)
-    run_confidence   = compute_run_confidence(page_data, active_filters)
+    # ── FIX: Build page_health_list with correct structure ────────────────────
+    # compute_site_health_score() expects:
+    #   [{"health_score": float|None, "components": {"performance": x, ...}}, ...]
+    #
+    # Previously this used pg.get("health_breakdown", {}) which is only the
+    # inner components dict — missing health_score entirely, causing site health
+    # to always resolve to None.
+    page_health_list = [
+        {
+            "health_score": pg.get("health_score"),
+            "components": {
+                "performance":   pg.get("performance_score"),
+                "accessibility": pg.get("accessibility_score"),
+                "security":      pg.get("security_score"),
+                "functional":    pg.get("functional_score"),
+                "ui_form":       pg.get("ui_form_score"),
+            }
+        }
+        for pg in page_data
+    ]
+    site_health    = compute_site_health_score(page_health_list)
+    run_confidence = compute_run_confidence(page_data, active_filters)
     site_health["confidence_score"] = run_confidence
 
     site_summary_file = f"reports/site_health_{timestamp}.json"
@@ -1313,7 +1343,6 @@ async def build_reports(run_id: int, page_data: list, active_filters: list | Non
         "confidence_score":  run_confidence,
         "active_filters":    active_filters,
     }
-
 
 # ── Entry Point ────────────────────────────────────────────────────────────────
 

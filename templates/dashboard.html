@@ -4,858 +4,673 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="csrf-token" content="{{ csrf_token() }}" />
-    <title>Guardian AI | Dashboard</title>
-    <link
-      rel="stylesheet"
-      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
-    />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <title>Guardian AI | Mission Control</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-    <style>
-      :root {
-        --primary: #6366f1;
-        --secondary: #ec4899;
-        --accent: #8b5cf6;
-        --bg-body: #f0f4f8;
-        --text-main: #0f172a;
-        --text-muted: #64748b;
-        --border: #e2e8f0;
-        --success: #10b981;
-        --danger: #ef4444;
-        --warning: #f59e0b;
-        --card-bg: #ffffff;
-        --font-main: "Inter", sans-serif;
-        --font-code: "JetBrains Mono", monospace;
-        --radius-sm: 8px;
-        --radius-md: 12px;
-        --radius-lg: 16px;
-        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
-        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
-      }
+<style>
 
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-        outline: none;
-        -webkit-tap-highlight-color: transparent;
-      }
 
-      body {
-        font-family: var(--font-main);
-        background: var(--bg-body);
-        color: var(--text-main);
-        height: 100vh;
-        overflow: hidden;
-        display: flex;
-        background-image:
-          radial-gradient(
-            circle at 5% 10%,
-            rgba(99, 102, 241, 0.07) 0%,
-            transparent 30%
-          ),
-          radial-gradient(
-            circle at 95% 90%,
-            rgba(236, 72, 153, 0.07) 0%,
-            transparent 30%
-          );
-      }
+/* ─────────────────────────────────────────────
+   DESIGN SYSTEM (Light Theme Synced with Guardian AI)
+───────────────────────────────────────────── */
+:root {
+  /* Backgrounds & Surfaces */
+  --bg: #f0f4f8;
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  
+  /* Borders */
+  --border: #e2e8f0;
+  --border-glow: rgba(99, 102, 241, 0.35);
 
-      ::-webkit-scrollbar {
-        width: 5px;
-        height: 5px;
-      }
-      ::-webkit-scrollbar-track {
-        background: transparent;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #cbd5e1;
-        border-radius: 10px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: var(--primary);
-      }
+  /* Brand Colors */
+  --primary: #6366f1;
+  --primary-dim: rgba(99, 102, 241, 0.08);
+  --accent: #8b5cf6;
+  --cyan: #06b6d4;
+  --emerald: #10b981;
+  --amber: #f59e0b;
+  --rose: #f43f5e;
+  --pink: #ec4899;
 
-      /* ── Layout ─────────────────────────────────── */
-      .main-content {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-        overflow: hidden;
-      }
+  /* Typography Colors */
+  --text-1: #0f172a;
+  --text-2: #64748b;
+  --text-3: #94a3b8;
 
-      .topbar {
-        height: 64px;
-        background: rgba(255, 255, 255, 0.92);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0 24px;
-        flex-shrink: 0;
-        gap: 16px;
-      }
-      .topbar-left {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-      .hamburger-btn {
-        display: none;
-        background: none;
-        border: none;
-        font-size: 18px;
-        color: var(--text-main);
-        cursor: pointer;
-        padding: 6px;
-        border-radius: 6px;
-        transition: background 0.15s;
-      }
-      .hamburger-btn:hover {
-        background: #f1f5f9;
-      }
-      .topbar-title {
-        font-size: 17px;
+  /* Fonts */
+  --font: 'Inter', 'DM Sans', sans-serif;
+  --mono: 'JetBrains Mono', 'DM Mono', monospace;
 
-        color: var(--text-main);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      .topbar-title i {
-        color: var(--primary);
-        font-size: 16px;
-      }
+  /* Radii */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-xl: 20px;
 
-      .content-scroll {
-        flex: 1;
-        overflow-y: auto;
-        padding: 24px;
-      }
-      .container-width {
-        max-width: 1360px;
-        margin: 0 auto;
-      }
+  /* Shadows */
+  --sh-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --sh-card: 0 4px 16px rgba(0, 0, 0, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02);
+  --sh-glow: 0 0 0 3px rgba(99, 102, 241, 0.1), 0 8px 32px rgba(99, 102, 241, 0.15);
+  --sh-pop: 0 20px 60px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.02);
+  
+  /* Animation Timings */
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}
 
-      /* ── Cards ──────────────────────────────────── */
-      .card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        padding: 20px;
-        box-shadow: var(--shadow-sm);
-      }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { color-scheme: light; }
 
-      /* ── Workspace Banner ───────────────────────── */
-      .workspace-banner {
-        display: flex;
-        align-items: center;
-        gap: 14px;
-        padding: 14px 18px;
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        box-shadow: var(--shadow-sm);
-        margin-bottom: 20px;
-      }
-      .workspace-icon {
-        width: 36px;
-        height: 36px;
-        background: linear-gradient(135deg, var(--primary), var(--accent));
-        border-radius: 9px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 14px;
-        flex-shrink: 0;
-        box-shadow: 0 4px 10px rgba(99, 102, 241, 0.25);
-      }
-      .workspace-info {
-        flex: 1;
-        min-width: 0;
-      }
-      .workspace-name {
-        font-size: 14px;
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text-1);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  font-size: 14px;
+  line-height: 1.5;
+  /* Ambient glowing orbs in the background */
+  background-image:
+    radial-gradient(circle at 5% 10%, rgba(99, 102, 241, 0.05) 0%, transparent 30%),
+    radial-gradient(circle at 95% 90%, rgba(236, 72, 153, 0.05) 0%, transparent 30%);
+}
 
-        color: var(--text-main);
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .plan-badge {
-        background: rgba(99, 102, 241, 0.1);
-        color: var(--primary);
-        font-size: 10px;
+/* Subtle grid bg */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none;
+  z-index: 0;
+}
 
-        padding: 2px 8px;
-        border-radius: 20px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
-      .workspace-meta {
-        font-size: 12px;
-        color: var(--text-muted);
-        margin-top: 2px;
-      }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
 
-      /* ── Stat Grid ──────────────────────────────── */
-      .stats-grid {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 14px;
-        margin-bottom: 20px;
-      }
-      .stat-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        padding: 18px;
-        box-shadow: var(--shadow-sm);
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 12px;
-      }
-      .stat-body {
-        flex: 1;
-        min-width: 0;
-      }
-      .stat-val {
-        font-size: 26px;
+/* ─────────────────────────────────────────────
+   ANIMATIONS
+───────────────────────────────────────────── */
+@keyframes fadeUp {
+  0% { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
 
-        color: var(--text-main);
-        font-family: var(--font-code);
-        line-height: 1;
-        margin-bottom: 4px;
-      }
-      .stat-lbl {
-        font-size: 12px;
+@keyframes slideInLeft {
+  0% { opacity: 0; transform: translateX(-20px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
 
-        color: var(--text-muted);
-      }
-      .stat-icon {
-        width: 36px;
-        height: 36px;
-        border-radius: 9px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 15px;
-        flex-shrink: 0;
-      }
+@keyframes pulseSoft {
+  0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+}
 
-      /* ── Score Row ──────────────────────────────── */
-      .score-row {
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-        gap: 14px;
-        margin-bottom: 20px;
-      }
-      .score-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        padding: 18px 12px;
-        box-shadow: var(--shadow-sm);
-        text-align: center;
-      }
-      .donut-wrap {
-        position: relative;
-        width: 76px;
-        height: 76px;
-        margin: 0 auto 10px;
-      }
-      .donut-center {
-        position: absolute;
-        inset: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-      }
-      .donut-num {
-        font-size: 17px;
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+  100% { transform: translateY(0px); }
+}
 
-        font-family: var(--font-code);
-        line-height: 1;
-      }
-      .donut-sub {
-        font-size: 9px;
-        color: var(--text-muted);
-      }
-      .score-label {
-        font-size: 11px;
+.anim { animation: fadeUp 0.5s var(--spring) both; }
+.d1 { animation-delay: 0.05s; }
+.d2 { animation-delay: 0.1s; }
+.d3 { animation-delay: 0.15s; }
+.d4 { animation-delay: 0.2s; }
+.d5 { animation-delay: 0.25s; }
 
-        color: var(--text-muted);
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-      }
+/* ─────────────────────────────────────────────
+   SIDEBAR
+───────────────────────────────────────────── */
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: relative;
+  z-index: 10;
+  overflow-y: auto;
+  box-shadow: 1px 0 10px rgba(0,0,0,0.02);
+  animation: slideInLeft 0.5s var(--spring) both;
+}
 
-      /* ── Charts Row ─────────────────────────────── */
-      .charts-row {
-        display: grid;
-        grid-template-columns: 3fr 2fr;
-        gap: 16px;
-        margin-bottom: 20px;
-      }
-      .chart-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        padding: 20px;
-        box-shadow: var(--shadow-sm);
-      }
-      .card-heading {
-        font-size: 13px;
+.sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 18px 16px;
+  border-bottom: 1px dashed var(--border);
+}
 
-        color: var(--text-main);
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        margin-bottom: 16px;
-      }
-      .card-heading i {
-        color: var(--primary);
-      }
+.logo-icon {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: white;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  transition: transform 0.3s var(--spring);
+}
+.sidebar-logo:hover .logo-icon {
+  transform: scale(1.08) rotate(-5deg);
+}
 
-      /* ── Issues Row ─────────────────────────────── */
-      .issues-row {
-        display: grid;
-        grid-template-columns: repeat(4, 1fr);
-        gap: 14px;
-        margin-bottom: 20px;
-      }
-      .issue-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        padding: 16px;
-        box-shadow: var(--shadow-sm);
-        display: flex;
-        align-items: center;
-        gap: 12px;
-      }
-      .issue-icon {
-        width: 36px;
-        height: 36px;
-        border-radius: 9px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 14px;
-        flex-shrink: 0;
-      }
-      .issue-val {
-        font-size: 22px;
+.logo-text { font-size: 16px; font-weight: 800; letter-spacing: -0.3px; color: var(--text-1); }
+.logo-sub { font-size: 10px; color: var(--primary); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-top: 1px; }
 
-        font-family: var(--font-code);
-        line-height: 1;
-      }
-      .issue-lbl {
-        font-size: 11px;
+.sidebar-nav { flex: 1; padding: 16px 12px; display: flex; flex-direction: column; gap: 4px; }
 
-        color: var(--text-muted);
-        margin-top: 2px;
-      }
+.nav-section {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  padding: 16px 8px 6px;
+}
 
-      /* ── Table ──────────────────────────────────── */
-      .table-card {
-        background: var(--card-bg);
-        border: 1px solid var(--border);
-        border-radius: var(--radius-lg);
-        box-shadow: var(--shadow-sm);
-        overflow: hidden;
-        margin-bottom: 0;
-      }
-      .table-card-header {
-        padding: 16px 20px;
-        border-bottom: 1px solid var(--border);
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-      }
-      thead th {
-        background: #f8fafc;
-        padding: 10px 16px;
-        font-size: 11px;
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s var(--smooth);
+  border: 1px solid transparent;
+}
 
-        color: var(--text-muted);
-        text-transform: uppercase;
-        text-align: left;
-        border-bottom: 1px solid var(--border);
-        white-space: nowrap;
-        letter-spacing: 0.4px;
-        position: sticky;
-        top: 0;
-        z-index: 5;
-      }
-      .table-scroll-wrap {
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-      }
+.nav-item:hover { 
+  background: var(--surface-2); 
+  color: var(--primary); 
+  transform: translateX(4px);
+}
 
-      /* ── Pagination ─────────────────────────────── */
-      .pagination-bar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 20px;
-        border-top: 1px solid var(--border);
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      .pagination-info {
-        font-size: 12px;
-        color: var(--text-muted);
-      }
-      .pagination-btns {
-        display: flex;
-        gap: 4px;
-      }
-      .pg-btn {
-        min-width: 30px;
-        height: 30px;
-        border: 1.5px solid var(--border);
-        background: var(--card-bg);
-        border-radius: 6px;
-        font-size: 12px;
+.nav-item.active {
+  background: var(--primary-dim);
+  color: var(--primary);
+  border-color: rgba(99, 102, 241, 0.15);
+}
 
-        color: var(--text-muted);
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        transition: all 0.15s;
-        padding: 0 8px;
-      }
-      .pg-btn:hover:not(:disabled) {
-        border-color: var(--primary);
-        color: var(--primary);
-      }
-      .pg-btn.active {
-        background: var(--primary);
-        border-color: var(--primary);
-        color: white;
-      }
-      .pg-btn:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-      }
+.nav-item i { width: 16px; text-align: center; font-size: 14px; transition: transform 0.2s; }
+.nav-item:hover i { transform: scale(1.1); }
 
-      /* ── Delete button in table ──────────────────── */
-      .del-run-btn {
-        width: 28px;
-        height: 28px;
-        border: 1px solid #fecaca;
-        border-radius: 6px;
-        background: white;
-        color: #ef4444;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 11px;
-        transition: all 0.15s;
-        opacity: 0;
-      }
-      tr:hover .del-run-btn {
-        opacity: 1;
-      }
-      .del-run-btn:hover {
-        background: #fee2e2;
-        border-color: #ef4444;
-      }
+.nav-cta {
+  display: flex; align-items: center; gap: 9px; margin: 8px 0 12px; padding: 12px;
+  background: linear-gradient(135deg, var(--primary), #4f46e5);
+  color: white; border-radius: var(--r-md); font-weight: 600; font-size: 13px;
+  text-decoration: none; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25);
+  transition: all 0.3s var(--spring);
+}
+.nav-cta:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35); }
 
-      /* ── Delete modal ───────────────────────────── */
-      .delete-modal-overlay {
-        position: fixed;
-        inset: 0;
-        background: rgba(15, 23, 42, 0.6);
-        backdrop-filter: blur(8px);
-        z-index: 200;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.25s;
-        padding: 20px;
-      }
-      .delete-modal-overlay.open {
-        opacity: 1;
-        pointer-events: auto;
-      }
-      .delete-modal-box {
-        background: white;
-        border-radius: 18px;
-        padding: 28px 30px;
-        max-width: 420px;
-        width: 100%;
-        box-shadow: 0 20px 50px -8px rgba(0, 0, 0, 0.3);
-        transform: scale(0.93) translateY(12px);
-        transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-        text-align: center;
-      }
-      .delete-modal-overlay.open .delete-modal-box {
-        transform: scale(1) translateY(0);
-      }
-      .delete-modal-icon {
-        width: 52px;
-        height: 52px;
-        background: #fee2e2;
-        border-radius: 14px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 22px;
-        color: var(--danger);
-        margin: 0 auto 16px;
-      }
-      .delete-modal-box h3 {
-        font-size: 18px;
+/* Sidebar History */
+.sidebar-history { padding: 8px 10px 8px; }
+.history-item {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: var(--r-sm); color: var(--text-2); text-decoration: none;
+  font-size: 12px; transition: all 0.2s;
+}
+.history-item:hover { background: var(--surface-2); color: var(--text-1); transform: translateX(3px); }
+.history-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--border); transition: background 0.2s; }
+.history-item:hover .history-dot { background: var(--primary); }
+.history-url { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.history-id { font-family: var(--mono); font-size: 10px; color: var(--text-3); }
 
-        color: var(--text-main);
-        margin-bottom: 8px;
-      }
-      .delete-modal-box p {
-        font-size: 13px;
-        color: var(--text-muted);
-        line-height: 1.6;
-        margin-bottom: 22px;
-      }
-      .delete-modal-url {
-        font-family: var(--font-code);
-        font-size: 11px;
-        background: #f8fafc;
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 6px 10px;
-        color: var(--text-main);
-        word-break: break-all;
-        margin-bottom: 22px;
-        display: block;
-        text-align: left;
-      }
-      .delete-modal-actions {
-        display: flex;
-        gap: 10px;
-      }
-      .dm-cancel-btn {
-        flex: 1;
-        padding: 11px;
-        border: 1.5px solid var(--border);
-        border-radius: 10px;
-        background: white;
-        color: var(--text-main);
-        font-size: 14px;
+/* Sidebar Footer */
+.sidebar-footer { padding: 16px 12px; border-top: 1px dashed var(--border); background: var(--surface-2); }
+.user-card {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border);
+  box-shadow: var(--sh-sm); transition: transform 0.2s;
+}
+.user-card:hover { transform: translateY(-2px); border-color: #cbd5e1; }
+.user-avatar {
+  width: 34px; height: 34px; border-radius: 8px;
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: white; display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 13px; flex-shrink: 0;
+}
+.user-name { font-size: 13px; font-weight: 700; color: var(--text-1); }
+.user-plan { font-size: 10px; color: var(--emerald); font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+.logout-btn {
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border-radius: 8px; color: var(--text-3); background: var(--surface-3);
+  text-decoration: none; transition: all 0.2s; flex-shrink: 0; margin-left: auto;
+}
+.logout-btn:hover { background: #fee2e2; color: var(--rose); transform: rotate(90deg); }
 
-        cursor: pointer;
-        transition: all 0.15s;
-      }
-      .dm-cancel-btn:hover {
-        background: #f8fafc;
-      }
-      .dm-confirm-btn {
-        flex: 1;
-        padding: 11px;
-        border: none;
-        border-radius: 10px;
-        background: var(--danger);
-        color: white;
-        font-size: 14px;
+/* ─────────────────────────────────────────────
+   MAIN CONTENT & TOPBAR
+───────────────────────────────────────────── */
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; position: relative; z-index: 1; }
 
-        cursor: pointer;
-        transition: all 0.15s;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 7px;
-      }
-      .dm-confirm-btn:hover {
-        background: #dc2626;
-      }
-      .dm-confirm-btn:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
+.topbar {
+  height: 64px; background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 28px; gap: 14px; flex-shrink: 0;
+  position: relative; z-index: 20; box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+}
 
-      tbody tr {
-        border-bottom: 1px solid #f1f5f9;
-        transition: background 0.1s;
-      }
-      tbody tr:last-child {
-        border-bottom: none;
-      }
-      tbody tr:hover {
-        background: #fafbfc;
-      }
-      td {
-        padding: 12px 16px;
-        font-size: 13px;
-        color: var(--text-main);
-      }
-      .td-url {
-        max-width: 220px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        display: block;
-        font-size: 12px;
-        color: var(--text-muted);
-        font-family: var(--font-code);
-      }
+.topbar-title { font-size: 16px; font-weight: 800; color: var(--text-1); letter-spacing: -0.3px; flex: 1; display: flex; align-items: center; gap: 10px; }
+.topbar-title .subtitle { font-size: 12px; font-weight: 500; color: var(--text-3); border-left: 1px solid var(--border); padding-left: 10px; }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
 
-      /* ── Status Badges ──────────────────────────── */
-      .status-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-        padding: 3px 9px;
-        border-radius: 20px;
-        font-size: 11px;
-      }
-      .status-badge.completed {
-        background: rgba(16, 185, 129, 0.1);
-        color: var(--success);
-      }
-      .status-badge.running {
-        background: rgba(99, 102, 241, 0.1);
-        color: var(--primary);
-      }
-      .status-badge.failed {
-        background: rgba(239, 68, 68, 0.1);
-        color: var(--danger);
-      }
+.admin-btn {
+  display: flex; align-items: center; gap: 7px; padding: 8px 16px;
+  background: rgba(245, 158, 11, 0.08); border: 1.5px solid rgba(245, 158, 11, 0.2);
+  border-radius: var(--r-sm); color: #d97706; font-size: 12px; font-weight: 700;
+  text-decoration: none; letter-spacing: 0.3px; text-transform: uppercase;
+  transition: all 0.2s var(--smooth);
+}
+.admin-btn:hover {
+  background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.4);
+  transform: translateY(-1px); box-shadow: 0 4px 12px rgba(245, 158, 11, 0.15);
+}
 
-      .view-btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        padding: 5px 11px;
-        background: rgba(99, 102, 241, 0.07);
-        color: var(--primary);
-        border-radius: var(--radius-sm);
-        font-size: 12px;
+.topbar-stat {
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-sm); font-size: 12px; color: var(--text-2); font-weight: 500;
+}
+.topbar-stat strong { color: var(--primary); font-weight: 700; font-family: var(--mono); }
 
-        text-decoration: none;
-        transition:
-          background 0.15s,
-          color 0.15s;
-        white-space: nowrap;
-      }
-      .view-btn:hover {
-        background: var(--primary);
-        color: white;
-      }
+.content { flex: 1; overflow-y: auto; padding: 28px; scroll-behavior: smooth; }
+.page-grid { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
 
-      /* ── Empty State ────────────────────────────── */
-      .empty-state {
-        text-align: center;
-        padding: 56px 24px;
-        color: var(--text-muted);
-      }
-      .empty-state i {
-        font-size: 38px;
-        margin-bottom: 14px;
-        opacity: 0.25;
-        display: block;
-      }
-      .empty-state h3 {
-        font-size: 15px;
+/* ─────────────────────────────────────────────
+   CARDS
+───────────────────────────────────────────── */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--r-xl); box-shadow: var(--sh-card);
+  overflow: hidden; position: relative; transition: box-shadow 0.3s ease;
+}
+.card:hover { box-shadow: var(--sh-sm), 0 8px 24px rgba(0,0,0,0.06); }
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px 16px; border-bottom: 1px solid var(--surface-2); background: #fafbfc;
+}
+.card-title {
+  font-size: 14px; font-weight: 800; color: var(--text-1);
+  display: flex; align-items: center; gap: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.card-title i { color: var(--primary); font-size: 14px; }
+.card-body { padding: 24px; }
 
-        color: var(--text-main);
-        margin-bottom: 6px;
-      }
-      .empty-state p {
-        font-size: 13px;
-      }
+/* ─────────────────────────────────────────────
+   METRICS GRID
+───────────────────────────────────────────── */
+.metrics-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+.metric-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 22px; box-shadow: var(--sh-sm); position: relative; overflow: hidden;
+  transition: all 0.3s var(--spring); cursor: default;
+}
+.metric-card:hover { border-color: var(--primary); box-shadow: var(--sh-glow); transform: translateY(-3px); }
+.metric-card::before {
+  content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 4px;
+  background: var(--accent-color, var(--primary)); opacity: 0.8;
+  transition: height 0.2s ease;
+}
+.metric-card:hover::before { height: 6px; }
 
-      /* ── Responsive ─────────────────────────────── */
-      @media (max-width: 1100px) {
-        .score-row {
-          grid-template-columns: repeat(3, 1fr);
-        }
-        .stats-grid {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .charts-row {
-          grid-template-columns: 1fr;
-        }
-        .issues-row {
-          grid-template-columns: repeat(2, 1fr);
-        }
-      }
-      @media (max-width: 768px) {
-        .hamburger-btn {
-          display: block;
-        }
-        .content-scroll {
-          padding: 16px;
-        }
-        .stats-grid {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .score-row {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .issues-row {
-          grid-template-columns: repeat(2, 1fr);
-        }
-        .workspace-banner {
-          flex-wrap: wrap;
-        }
-        td,
-        th {
-          padding: 10px 12px;
-        }
-      }
-      @media (max-width: 480px) {
-        .stats-grid {
-          grid-template-columns: 1fr 1fr;
-        }
-        .score-row {
-          grid-template-columns: 1fr 1fr;
-        }
-        .issues-row {
-          grid-template-columns: 1fr 1fr;
-        }
-      }
-    </style>
+.metric-icon {
+  width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; margin-bottom: 18px; background: var(--icon-bg, var(--primary-dim));
+  color: var(--icon-color, var(--primary)); transition: transform 0.3s var(--spring);
+}
+.metric-card:hover .metric-icon { transform: scale(1.1) rotate(5deg); }
+
+.metric-val { font-family: var(--mono); font-size: 32px; font-weight: 800; color: var(--text-1); line-height: 1; margin-bottom: 6px; letter-spacing: -0.5px; }
+.metric-label { font-size: 12px; color: var(--text-2); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+.metric-badge {
+  position: absolute; top: 20px; right: 20px; font-size: 11px; font-weight: 800; padding: 4px 10px;
+  border-radius: 20px; text-transform: uppercase; letter-spacing: 0.5px; animation: pulseSoft 2s infinite;
+}
+
+/* ─────────────────────────────────────────────
+   SCORE ROW (Component Scores)
+───────────────────────────────────────────── */
+.scores-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+.score-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+  padding: 20px 16px; text-align: center; box-shadow: var(--sh-sm); position: relative;
+  transition: all 0.3s var(--spring);
+}
+.score-card:hover { border-color: var(--primary); transform: translateY(-4px); box-shadow: 0 10px 25px rgba(99,102,241,0.1); }
+.score-ring { position: relative; width: 76px; height: 76px; margin: 0 auto 14px; }
+.score-ring canvas { display: block; }
+.score-ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.score-num { font-family: var(--mono); font-size: 14px; font-weight: 800; line-height: 1; color: var(--text-1); }
+.score-sub { font-size: 10px; color: var(--text-3); font-weight: 600; text-transform: uppercase; margin-top: 2px; }
+.score-label { font-size: 11px; font-weight: 700; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ─────────────────────────────────────────────
+   TWO COLUMN LAYOUT
+───────────────────────────────────────────── */
+.two-col { display: grid; grid-template-columns: 1fr 380px; gap: 24px; }
+
+/* ─────────────────────────────────────────────
+   ISSUE CHIPS
+───────────────────────────────────────────── */
+.issue-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.issue-chip {
+  display: flex; align-items: center; gap: 14px; padding: 16px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--r-md); transition: all 0.2s var(--smooth); cursor: default;
+}
+.issue-chip:hover { border-color: var(--primary); background: var(--surface); box-shadow: var(--sh-sm); transform: translateX(2px); }
+.issue-chip-icon {
+  width: 40px; height: 40px; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  font-size: 16px; flex-shrink: 0; color: white; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+.issue-val { font-family: var(--mono); font-size: 24px; font-weight: 800; line-height: 1; color: var(--text-1); }
+.issue-lbl { font-size: 11px; color: var(--text-2); font-weight: 700; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ─────────────────────────────────────────────
+   TABLE
+───────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; }
+.data-table thead th {
+  background: #f8fafc; padding: 14px 18px; font-size: 11px; font-weight: 800; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.8px; text-align: left; border-bottom: 2px solid var(--border);
+  white-space: nowrap; position: sticky; top: 0; z-index: 2;
+}
+.data-table tbody tr { border-bottom: 1px solid #f1f5f9; transition: background 0.2s; }
+.data-table tbody tr:hover { background: #fafbfc; }
+.data-table td { padding: 14px 18px; font-size: 13px; vertical-align: middle; color: var(--text-1); font-weight: 500; }
+.td-url { font-family: var(--mono); font-size: 12px; color: var(--primary); font-weight: 600; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-id { font-family: var(--mono); font-size: 11px; color: var(--text-3); font-weight: 600;}
+
+/* Badges */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px;
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap;
+}
+.badge-completed { background: rgba(16, 185, 129, 0.1); color: #059669; border: 1px solid rgba(16, 185, 129, 0.2); }
+.badge-running   { background: rgba(99, 102, 241, 0.1); color: var(--primary); border: 1px solid rgba(99, 102, 241, 0.2); animation: pulseSoft 2s infinite; }
+.badge-queued    { background: rgba(245, 158, 11, 0.1); color: #d97706; border: 1px solid rgba(245, 158, 11, 0.2); }
+.badge-failed    { background: rgba(239, 68, 68, 0.1);  color: #dc2626; border: 1px solid rgba(239, 68, 68, 0.2);  }
+
+/* Table Health Bar */
+.health-num { font-family: var(--mono); font-size: 14px; font-weight: 800; }
+.health-bar { width: 70px; height: 5px; background: #e2e8f0; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+.health-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+
+.conf-pill { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border); background: var(--surface-2); }
+
+/* Table Buttons */
+.btn-view {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; background: var(--surface);
+  color: var(--text-1); border-radius: var(--r-sm); font-size: 12px; font-weight: 600;
+  text-decoration: none; transition: all 0.2s var(--spring); border: 1.5px solid var(--border);
+}
+.btn-view:hover { background: var(--primary-dim); color: var(--primary); border-color: var(--primary); transform: translateY(-1px); }
+
+.btn-del {
+  width: 30px; height: 30px; border: 1.5px solid rgba(239, 68, 68, 0.2); border-radius: var(--r-sm);
+  background: rgba(239, 68, 68, 0.05); color: var(--rose); cursor: pointer; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 12px; transition: all 0.2s var(--spring); opacity: 0;
+}
+.data-table tbody tr:hover .btn-del { opacity: 1; }
+.btn-del:hover { background: var(--rose); color: white; transform: rotate(10deg) scale(1.1); box-shadow: 0 4px 10px rgba(239, 68, 68, 0.2); }
+
+/* ─────────────────────────────────────────────
+   PAGINATION
+───────────────────────────────────────────── */
+.pagination { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-2); font-weight: 500; background: #fafbfc; }
+.pg-btns { display: flex; gap: 6px; }
+.pg-btn {
+  width: 32px; height: 32px; border: 1.5px solid var(--border); background: var(--surface);
+  border-radius: 8px; color: var(--text-2); font-size: 12px; font-weight: 700; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: all 0.2s; font-family: var(--font);
+}
+.pg-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); background: var(--primary-dim); transform: translateY(-1px); }
+.pg-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 2px 8px rgba(99,102,241,0.3); }
+.pg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ─────────────────────────────────────────────
+   EMPTY STATE
+───────────────────────────────────────────── */
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 24px; text-align: center; }
+.empty-icon {
+  width: 72px; height: 72px; background: var(--surface-2); border: 2px dashed var(--border);
+  border-radius: var(--r-xl); display: flex; align-items: center; justify-content: center;
+  font-size: 30px; color: var(--text-3); margin-bottom: 20px; transition: transform 0.3s;
+}
+.empty-state:hover .empty-icon { transform: scale(1.05) rotate(5deg); border-color: var(--primary); color: var(--primary); background: var(--primary-dim); }
+.empty-title { font-size: 18px; font-weight: 800; color: var(--text-1); margin-bottom: 8px; }
+.empty-sub { font-size: 13px; color: var(--text-2); font-weight: 500; max-width: 300px; line-height: 1.6; }
+
+/* ─────────────────────────────────────────────
+   SKELETON LOADING
+───────────────────────────────────────────── */
+@keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+.skeleton { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 400px 100%; animation: shimmer 1.5s infinite linear; border-radius: 6px; }
+
+/* ─────────────────────────────────────────────
+   DELETE MODAL
+───────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); backdrop-filter: blur(8px);
+  z-index: 1000; display: flex; align-items: center; justify-content: center;
+  opacity: 0; pointer-events: none; transition: opacity 0.3s ease; padding: 20px;
+}
+.modal-overlay.open { opacity: 1; pointer-events: auto; }
+.modal {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+  padding: 32px 28px; max-width: 420px; width: 100%; box-shadow: var(--sh-pop);
+  transform: scale(0.95) translateY(16px); transition: transform 0.4s var(--spring); text-align: center;
+}
+.modal-overlay.open .modal { transform: scale(1) translateY(0); }
+.modal-icon {
+  width: 56px; height: 56px; background: #fee2e2; border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; color: var(--rose); margin: 0 auto 20px;
+}
+.modal h3 { font-size: 20px; font-weight: 800; margin-bottom: 10px; color: var(--text-1); }
+.modal p { font-size: 13px; color: var(--text-2); font-weight: 500; line-height: 1.6; margin-bottom: 24px; }
+.modal-url {
+  font-family: var(--mono); font-size: 11px; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: var(--r-sm); padding: 8px 12px; color: var(--text-1); font-weight: 600;
+  word-break: break-all; margin-bottom: 24px; display: block; text-align: left;
+}
+.modal-actions { display: flex; gap: 12px; }
+.btn-cancel {
+  flex: 1; padding: 12px; border: 1.5px solid var(--border); background: var(--surface);
+  color: var(--text-1); border-radius: var(--r-md); font-size: 14px; font-weight: 700;
+  cursor: pointer; font-family: var(--font); transition: all 0.2s;
+}
+.btn-cancel:hover { background: var(--surface-2); border-color: #cbd5e1; transform: translateY(-1px); }
+.btn-danger {
+  flex: 1; padding: 12px; border: none; background: var(--rose); color: white;
+  border-radius: var(--r-md); font-size: 14px; font-weight: 700; cursor: pointer;
+  font-family: var(--font); transition: all 0.2s var(--spring); display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-danger:hover { background: #e11d48; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(225, 29, 72, 0.3); }
+
+/* ─────────────────────────────────────────────
+   WORKSPACE BANNER
+───────────────────────────────────────────── */
+.workspace-banner {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl);
+  padding: 24px 28px; display: flex; align-items: center; gap: 20px; box-shadow: var(--sh-sm);
+  position: relative; overflow: hidden; transition: transform 0.3s var(--spring), box-shadow 0.3s;
+}
+.workspace-banner:hover { transform: translateY(-3px); box-shadow: var(--sh-card); }
+.workspace-banner::before {
+  content: ''; position: absolute; top: 0; right: 0; width: 300px; height: 100%;
+  background: radial-gradient(ellipse at 100% 50%, rgba(99,102,241,0.08) 0%, transparent 70%); pointer-events: none;
+}
+.workspace-icon {
+  width: 52px; height: 52px; border-radius: 14px; background: linear-gradient(135deg, var(--primary), var(--accent));
+  display: flex; align-items: center; justify-content: center; font-size: 22px; color: white;
+  box-shadow: 0 6px 20px rgba(99,102,241,0.3); flex-shrink: 0; animation: float 6s ease-in-out infinite;
+}
+.workspace-name { font-size: 18px; font-weight: 800; color: var(--text-1); display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+.plan-badge {
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; padding: 4px 10px;
+  border-radius: 20px; background: rgba(99,102,241,0.1); color: var(--primary); border: 1px solid rgba(99,102,241,0.2);
+}
+.workspace-meta { font-size: 13px; color: var(--text-2); font-weight: 500; }
+
+/* ─────────────────────────────────────────────
+   RESPONSIVE
+───────────────────────────────────────────── */
+@media (max-width: 1200px) {
+  .scores-row { grid-template-columns: repeat(3, 1fr); }
+  .metrics-row { grid-template-columns: repeat(2, 1fr); }
+  .two-col { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  .metrics-row { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 600px) {
+  .metrics-row { grid-template-columns: 1fr; }
+  .scores-row { grid-template-columns: repeat(2, 1fr); }
+  .issue-grid { grid-template-columns: 1fr; }
+}
+
+</style>
   </head>
   <body>
+
+    <!-- ═══════════════════════════════════════════
+         SIDEBAR
+    ═══════════════════════════════════════════ -->
     {% include "partials/sidebar.html" %}
 
-    <div class="main-content">
+    <!-- ═══════════════════════════════════════════
+         MAIN
+    ═══════════════════════════════════════════ -->
+    <div class="main">
+
+      <!-- TOPBAR -->
       <header class="topbar">
-        <div class="topbar-left">
-          <button class="hamburger-btn" onclick="toggleSidebar()">
-            <i class="fa-solid fa-bars"></i>
-          </button>
-          <div class="topbar-title">
-            VC-ERP Smart Agentic QA Automation
+        <div class="topbar-title">
+          Mission Control
+          <span class="subtitle">— Real-time QA Intelligence</span>
+        </div>
+
+        <div class="topbar-right">
+          <!-- Live plan stats -->
+          <div class="topbar-stat">
+            <i class="fa-solid fa-calendar-day" style="color:var(--primary);font-size:11px;"></i>
+            <span>{{ scans_today }} / {{ plan_limits.scans_per_day or '∞' }} today</span>
           </div>
+
+          <!-- ─── ADMIN PANEL BUTTON (role-based) ─── -->
+          {% if current_user.is_admin %}
+          <a href="/admin/" class="admin-btn">
+            <i class="fa-solid fa-shield-halved"></i>
+            Admin Panel
+          </a>
+          {% endif %}
         </div>
       </header>
 
-      <div class="content-scroll">
-        <div class="container-width">
-          <!-- Workspace Banner -->
-          <div class="workspace-banner">
+      <!-- CONTENT -->
+      <div class="content">
+        <div class="page-grid">
+
+          <!-- ── Workspace Banner ── -->
+          <div class="workspace-banner anim">
             <div class="workspace-icon"><i class="fa-solid fa-bolt"></i></div>
-            <div class="workspace-info">
+            <div style="flex:1;min-width:0;">
               <div class="workspace-name">
                 {{ current_user.username }}'s Workspace
                 <span class="plan-badge">{{ plan }}</span>
               </div>
               <div class="workspace-meta">
-                {% if plan_limits.scans_per_day %} Up to {{
-                plan_limits.scans_per_day }} scans/day · {{
-                plan_limits.pages_per_scan or '∞' }} pages/scan · {{
-                plan_limits.history_days }} days history {% else %} Unlimited
-                scans · Unlimited pages · {{ plan_limits.history_days }} days
-                history {% endif %}
+                {% if plan_limits.scans_per_day %}
+                  Up to {{ plan_limits.scans_per_day }} scans/day &middot;
+                  {{ plan_limits.pages_per_scan or '&infin;' }} pages/scan &middot;
+                  {{ plan_limits.history_days }} days history
+                {% else %}
+                  Unlimited scans &middot; Unlimited pages &middot; {{ plan_limits.history_days }} days history
+                {% endif %}
               </div>
+            </div>
+            <a href="/new-scan" style="display:flex;align-items:center;gap:8px;padding:10px 18px;background:var(--primary);color:white;border-radius:var(--r-md);font-size:13px;font-weight:700;text-decoration:none;transition:all 0.2s;flex-shrink:0;"
+               onmouseover="this.style.background='#4f46e5'" onmouseout="this.style.background='var(--primary)'">
+              <i class="fa-solid fa-plus"></i> New Scan
+            </a>
+          </div>
+
+          <!-- ── Key Metrics ── -->
+          <div class="metrics-row anim d1">
+            <div class="metric-card" style="--accent-color: var(--primary); --icon-bg: var(--primary-dim); --icon-color: var(--primary);">
+              <div class="metric-icon"><i class="fa-solid fa-magnifying-glass"></i></div>
+              <div class="metric-val counter" data-target="{{ total_scans or 0 }}">{{ total_scans or 0 }}</div>
+              <div class="metric-label">Total Scans</div>
+            </div>
+
+            <div class="metric-card" style="--accent-color: var(--emerald); --icon-bg: rgba(16,185,129,0.12); --icon-color: var(--emerald);">
+              <div class="metric-icon"><i class="fa-solid fa-file-lines"></i></div>
+              <div class="metric-val counter" data-target="{{ total_pages or 0 }}">{{ total_pages or 0 }}</div>
+              <div class="metric-label">Pages Analyzed</div>
+            </div>
+
+            <div class="metric-card" style="--accent-color: var(--amber); --icon-bg: rgba(245,158,11,0.12); --icon-color: var(--amber);">
+              <div class="metric-icon"><i class="fa-solid fa-heart-pulse"></i></div>
+              <div class="metric-val counter" data-target="{{ avg_health|int if avg_health else 0 }}" data-float="{{ avg_health or 0 }}">
+                {{ avg_health|round(1) if avg_health else '—' }}
+              </div>
+              <div class="metric-label">Avg Health Score</div>
+              {% if avg_health %}
+              <div class="metric-badge" style="background:{% if avg_health >= 75 %}rgba(16,185,129,0.12){% elif avg_health >= 50 %}rgba(245,158,11,0.12){% else %}rgba(244,63,94,0.12){% endif %};color:{% if avg_health >= 75 %}#34d399{% elif avg_health >= 50 %}#fbbf24{% else %}#fb7185{% endif %};">
+                {% if avg_health >= 75 %}Excellent{% elif avg_health >= 50 %}Good{% else %}Needs Work{% endif %}
+              </div>
+              {% endif %}
+            </div>
+
+            <div class="metric-card" style="--accent-color: var(--accent); --icon-bg: rgba(139,92,246,0.12); --icon-color: var(--accent);">
+              <div class="metric-icon"><i class="fa-solid fa-shield-check"></i></div>
+              <div class="metric-val counter" data-target="{{ avg_confidence|int if avg_confidence else 0 }}">
+                {{ avg_confidence|round(1) if avg_confidence else '—' }}
+              </div>
+              <div class="metric-label">Avg Confidence %</div>
             </div>
           </div>
 
-          <!-- Key Stats -->
-          <div class="stats-grid">
-            <div class="stat-card">
-              <div class="stat-body">
-                <div class="stat-val counter-num">{{ total_scans }}</div>
-                <div class="stat-lbl">Total Scans</div>
-              </div>
-              <div
-                class="stat-icon"
-                style="
-                  background: rgba(99, 102, 241, 0.1);
-                  color: var(--primary);
-                "
-              >
-                <i class="fa-solid fa-magnifying-glass"></i>
-              </div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-body">
-                <div class="stat-val counter-num">{{ total_pages }}</div>
-                <div class="stat-lbl">Pages Scanned</div>
-              </div>
-              <div
-                class="stat-icon"
-                style="
-                  background: rgba(16, 185, 129, 0.1);
-                  color: var(--success);
-                "
-              >
-                <i class="fa-solid fa-file-lines"></i>
-              </div>
-            </div>
-            <div class="stat-card">
-              <div class="stat-body">
-                <div class="stat-val counter-num">
-                  {{ avg_health|int if avg_health else 0 }}
-                </div>
-                <div class="stat-lbl">Avg Health Score</div>
-              </div>
-              <div
-                class="stat-icon"
-                style="
-                  background: rgba(245, 158, 11, 0.1);
-                  color: var(--warning);
-                "
-              >
-                <i class="fa-solid fa-heart-pulse"></i>
-              </div>
-            </div>
-            <div class="stat-card" style="border-top: 3px solid var(--accent)">
-              <div class="stat-body">
-                <div class="stat-val counter-num" style="color: var(--accent)">
-                  {{ avg_confidence|int if avg_confidence else 0 }}
-                </div>
-                <div class="stat-lbl">Avg Confidence %</div>
-              </div>
-              <div
-                class="stat-icon"
-                style="
-                  background: rgba(139, 92, 246, 0.1);
-                  color: var(--accent);
-                "
-              >
-                <i class="fa-solid fa-shield-check"></i>
-              </div>
-            </div>
-          </div>
-
-          <!-- Category Score Donuts -->
-          <div class="score-row">
-            {% set score_cards = [ ('Performance', avg_performance, '#6366f1'),
-            ('Accessibility', avg_accessibility, '#10b981'), ('Security',
-            avg_security, '#f59e0b'), ('Functional', avg_functional, '#ec4899'),
-            ('UI / Form', avg_ui_form, '#3b82f6') ] %} {% for label, score,
-            color in score_cards %}
+          <!-- ── Component Score Rings ── -->
+          <div class="scores-row anim d2">
+            {% for label, score, color in [
+                ('Performance',   avg_performance,   '#6366f1'),
+                ('Accessibility', avg_accessibility, '#10b981'),
+                ('Security',      avg_security,      '#f59e0b'),
+                ('Functional',    avg_functional,    '#ec4899'),
+                ('UI / Form',     avg_ui_form,       '#06b6d4')
+            ] %}
             <div class="score-card">
-              <div class="donut-wrap">
-                <canvas
-                  id="donut-{{ loop.index }}"
-                  width="76"
-                  height="76"
-                  data-val="{{ score|int if score else 0 }}"
-                  data-color="{{ color }}"
-                ></canvas>
-                <div class="donut-center">
-                  <div class="donut-num" style="color: {{ color }};">
-                    {{ score|int if score else '—' }}
-                  </div>
-                  <div class="donut-sub">/ 100</div>
+              <div class="score-ring">
+                <canvas id="ring-{{ loop.index }}" width="72" height="72"
+                        data-val="{{ score|int if score else 0 }}"
+                        data-color="{{ color }}"></canvas>
+                <div class="score-ring-center">
+                  <div class="score-num" style="color:{{ color }}">{{ score|int if score else '—' }}</div>
+                  <div class="score-sub">/ 100</div>
                 </div>
               </div>
               <div class="score-label">{{ label }}</div>
@@ -863,105 +678,114 @@
             {% endfor %}
           </div>
 
-          <!-- Charts -->
-          <div class="charts-row">
-            <div class="chart-card">
-              <div class="card-heading">
-                <i class="fa-solid fa-chart-line"></i> Score Trends
+          <!-- ── Charts + Issues ── -->
+          <div class="two-col anim d3">
+
+            <!-- Trend chart card -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><i class="fa-solid fa-chart-line"></i> Score Trends</div>
+                <span style="font-size:11px;color:var(--text-3);">Last 10 scans</span>
               </div>
-              <div style="position: relative; height: 200px">
-                <canvas id="trendChart"></canvas>
+              <div class="card-body">
+                {% if trend_labels and trend_health %}
+                <div class="chart-wrap">
+                  <canvas id="trendChart"></canvas>
+                </div>
+                {% else %}
+                <div class="empty-state" style="padding:40px;">
+                  <div class="empty-icon"><i class="fa-solid fa-chart-line"></i></div>
+                  <div class="empty-title">No trend data yet</div>
+                  <div class="empty-sub">Run your first scan to see score trends appear here.</div>
+                </div>
+                {% endif %}
               </div>
             </div>
-            <div class="chart-card">
-              <div class="card-heading">
-                <i class="fa-solid fa-chart-pie"></i> Page Health Distribution
+
+            <!-- Issues + Distribution -->
+            <div style="display:flex;flex-direction:column;gap:14px;">
+
+              <!-- Issue counts -->
+              <div class="issue-grid">
+                <div class="issue-chip">
+                  <div class="issue-chip-icon" style="background:rgba(16,185,129,0.12);color:#34d399;">
+                    <i class="fa-solid fa-universal-access"></i>
+                  </div>
+                  <div>
+                    <div class="issue-val" style="color:#34d399;">{{ total_a11y_issues or 0 }}</div>
+                    <div class="issue-lbl">A11y Issues</div>
+                  </div>
+                </div>
+                <div class="issue-chip">
+                  <div class="issue-chip-icon" style="background:rgba(244,63,94,0.12);color:#fb7185;">
+                    <i class="fa-solid fa-link-slash"></i>
+                  </div>
+                  <div>
+                    <div class="issue-val" style="color:#fb7185;">{{ total_broken_links or 0 }}</div>
+                    <div class="issue-lbl">Broken Links</div>
+                  </div>
+                </div>
+                <div class="issue-chip">
+                  <div class="issue-chip-icon" style="background:rgba(245,158,11,0.12);color:#fbbf24;">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                  </div>
+                  <div>
+                    <div class="issue-val" style="color:#fbbf24;">{{ total_js_errors or 0 }}</div>
+                    <div class="issue-lbl">JS Errors</div>
+                  </div>
+                </div>
+                <div class="issue-chip">
+                  <div class="issue-chip-icon" style="background:rgba(99,102,241,0.12);color:#818cf8;">
+                    <i class="fa-solid fa-gauge"></i>
+                  </div>
+                  <div>
+                    <div class="issue-val" style="color:#818cf8;">{{ total_slow_pages or 0 }}</div>
+                    <div class="issue-lbl">Slow Pages</div>
+                  </div>
+                </div>
               </div>
-              <div style="position: relative; height: 200px">
-                <canvas id="distChart"></canvas>
+
+              <!-- Donut distribution -->
+              <div class="card" style="flex:1;">
+                <div class="card-header">
+                  <div class="card-title"><i class="fa-solid fa-chart-donut"></i> Health Distribution</div>
+                </div>
+                <div class="card-body" style="padding:16px 20px;">
+                  {% set dist_data = [
+                    recent_runs | sum(attribute='excellent_pages') | default(0),
+                    recent_runs | sum(attribute='good_pages') | default(0),
+                    recent_runs | sum(attribute='needs_attention_pages') | default(0),
+                    recent_runs | sum(attribute='critical_pages') | default(0)
+                  ] %}
+                  {% if dist_data | sum > 0 %}
+                  <div style="height:150px;position:relative;">
+                    <canvas id="distChart"></canvas>
+                  </div>
+                  {% else %}
+                  <div style="text-align:center;padding:30px 0;color:var(--text-3);font-size:12px;">
+                    <i class="fa-solid fa-chart-donut" style="font-size:24px;margin-bottom:8px;display:block;opacity:0.3;"></i>
+                    No distribution data yet
+                  </div>
+                  {% endif %}
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Issue Counts -->
-          <div class="issues-row">
-            <div class="issue-card">
-              <div
-                class="issue-icon"
-                style="
-                  background: rgba(16, 185, 129, 0.1);
-                  color: var(--success);
-                "
-              >
-                <i class="fa-solid fa-universal-access"></i>
-              </div>
-              <div>
-                <div class="issue-val" style="color: var(--success)">
-                  {{ total_a11y_issues }}
-                </div>
-                <div class="issue-lbl">A11y Issues</div>
-              </div>
-            </div>
-            <div class="issue-card">
-              <div
-                class="issue-icon"
-                style="background: rgba(239, 68, 68, 0.1); color: var(--danger)"
-              >
-                <i class="fa-solid fa-link-slash"></i>
-              </div>
-              <div>
-                <div class="issue-val" style="color: var(--danger)">
-                  {{ total_broken_links }}
-                </div>
-                <div class="issue-lbl">Broken Links</div>
-              </div>
-            </div>
-            <div class="issue-card">
-              <div
-                class="issue-icon"
-                style="
-                  background: rgba(245, 158, 11, 0.1);
-                  color: var(--warning);
-                "
-              >
-                <i class="fa-solid fa-triangle-exclamation"></i>
-              </div>
-              <div>
-                <div class="issue-val" style="color: var(--warning)">
-                  {{ total_js_errors }}
-                </div>
-                <div class="issue-lbl">JS Errors</div>
-              </div>
-            </div>
-            <div class="issue-card">
-              <div
-                class="issue-icon"
-                style="
-                  background: rgba(99, 102, 241, 0.1);
-                  color: var(--primary);
-                "
-              >
-                <i class="fa-solid fa-gauge"></i>
-              </div>
-              <div>
-                <div class="issue-val" style="color: var(--primary)">
-                  {{ total_slow_pages }}
-                </div>
-                <div class="issue-lbl">Slow Pages</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Recent Scans Table -->
-          <div class="table-card">
-            <div class="table-card-header">
-              <div class="card-heading" style="margin-bottom: 0">
+          <!-- ── Scan History Table ── -->
+          <div class="card anim d4">
+            <div class="card-header">
+              <div class="card-title">
                 <i class="fa-solid fa-clock-rotate-left"></i> Recent Scan Runs
               </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <span id="pgInfo" style="font-size:12px;color:var(--text-3);"></span>
+              </div>
             </div>
-            <div class="table-scroll-wrap">
-              {% if recent_runs %}
-              <table id="runsTable">
+
+            {% if recent_runs %}
+            <div style="overflow-x:auto;">
+              <table class="data-table" id="runsTable">
                 <thead>
                   <tr>
                     <th>ID</th>
@@ -971,342 +795,399 @@
                     <th>Health</th>
                     <th>Confidence</th>
                     <th>Risk</th>
-                    <th></th>
+                    <th style="text-align:right;">Actions</th>
                   </tr>
                 </thead>
-                <tbody id="runsTableBody">
+                <tbody id="runsBody">
                   {% for run in recent_runs %}
-                  <tr
-                    data-run-id="{{ run.id }}"
-                    data-run-url="{{ run.target_url }}"
-                  >
+                  <tr data-run-id="{{ run.id }}" data-run-url="{{ run.target_url }}">
+                    <td><span class="run-id">#{{ run.id }}</span></td>
                     <td>
-                      <span
-                        style="
-                          font-family: var(--font-code);
-                          color: var(--text-muted);
-                          font-size: 12px;
-                        "
-                        >#{{ run.id }}</span
-                      >
-                    </td>
-                    <td>
-                      <span class="td-url" title="{{ run.target_url }}"
-                        >{{ run.target_url }}</span
-                      >
+                      <span class="td-url" title="{{ run.target_url }}">{{ run.target_url }}</span>
                     </td>
                     <td>
                       {% if run.status == 'completed' %}
-                      <span class="status-badge completed"
-                        ><i class="fa-solid fa-check"></i> Completed</span
-                      >
+                        <span class="badge badge-completed"><i class="fa-solid fa-check" style="font-size:8px;"></i>Completed</span>
                       {% elif run.status == 'running' %}
-                      <span class="status-badge running"
-                        ><i class="fa-solid fa-spinner fa-spin"></i>
-                        Running</span
-                      >
+                        <span class="badge badge-running"><i class="fa-solid fa-spinner fa-spin" style="font-size:8px;"></i>Running</span>
+                      {% elif run.status == 'queued' %}
+                        <span class="badge badge-queued"><i class="fa-solid fa-clock" style="font-size:8px;"></i>Queued</span>
                       {% else %}
-                      <span class="status-badge failed"
-                        ><i class="fa-solid fa-circle-xmark"></i> Failed</span
-                      >
+                        <span class="badge badge-failed"><i class="fa-solid fa-xmark" style="font-size:8px;"></i>Failed</span>
                       {% endif %}
                     </td>
-                    <td style="font-family: var(--font-code)">
-                      {{ run.total_tests or '—' }}
+                    <td>
+                      <span style="font-family:var(--mono);font-weight:600;">{{ run.total_tests or '—' }}</span>
                     </td>
                     <td>
-                      {% if run.site_health_score is not none %} {% set hs =
-                      run.site_health_score|float %}
-                      <span
-                        style="font-family: var(--font-code);  color: {% if hs>=75 %}var(--success){% elif hs>=50 %}var(--warning){% else %}var(--danger){% endif %}"
-                        >{{ hs|int }}</span
-                      >
-                      {% else %}—{% endif %}
+                      {% if run.site_health_score is not none %}
+                        {% set hs = run.site_health_score | float %}
+                        <div style="min-width:70px;">
+                          <div class="health-num" style="color:{% if hs >= 75 %}#34d399{% elif hs >= 50 %}#fbbf24{% else %}#fb7185{% endif %};">
+                            {{ hs | int }}
+                          </div>
+                          <div class="health-bar">
+                            <div class="health-bar-fill" style="width:{{ hs }}%;background:{% if hs >= 75 %}#34d399{% elif hs >= 50 %}#fbbf24{% else %}#fb7185{% endif %};"></div>
+                          </div>
+                        </div>
+                      {% else %}
+                        <span style="color:var(--text-3);">—</span>
+                      {% endif %}
                     </td>
                     <td>
-                      {% if run.confidence_score is not none %} {% set cs =
-                      run.confidence_score|float %}
-                      <span
-                        style="font-size: 11px;  padding: 3px 8px; border-radius: 20px; {% if cs >= 80 %}background: rgba(16,185,129,0.1); color: #059669;{% elif cs >= 50 %}background: rgba(245,158,11,0.1); color: #b45309;{% else %}background: rgba(239,68,68,0.1); color: #b91c1c;{% endif %}"
-                      >
-                        <i
-                          class="fa-solid fa-shield-check"
-                          style="margin-right: 3px"
-                        ></i
-                        >{{ cs|int }}%
-                      </span>
-                      {% else %}<span style="color: #94a3b8; font-size: 12px"
-                        >—</span
-                      >{% endif %}
+                      {% if run.confidence_score is not none %}
+                        {% set cs = run.confidence_score | float %}
+                        <span class="conf-pill" style="background:{% if cs >= 80 %}rgba(16,185,129,0.1){% elif cs >= 50 %}rgba(245,158,11,0.1){% else %}rgba(244,63,94,0.1){% endif %};color:{% if cs >= 80 %}#34d399{% elif cs >= 50 %}#fbbf24{% else %}#fb7185{% endif %};">
+                          <i class="fa-solid fa-shield-check" style="font-size:9px;"></i>{{ cs | int }}%
+                        </span>
+                      {% else %}
+                        <span style="color:var(--text-3);font-size:12px;">—</span>
+                      {% endif %}
                     </td>
-                    <td style="font-size: 12px; color: var(--text-muted)">
-                      {{ run.risk_category or '—' }}
+                    <td>
+                      <span style="font-size:12px;color:var(--text-2);">{{ run.risk_category or '—' }}</span>
                     </td>
-                    <td style="white-space: nowrap">
-                      <a href="/run/{{ run.id }}" class="view-btn"
-                        >View &rarr;</a
-                      >
-                      <button
-                        class="del-run-btn"
-                        data-run-id="{{ run.id }}"
-                        data-run-url="{{ run.target_url }}"
-                        onclick="
-                          openDeleteModal(
-                            this.dataset.runId,
-                            this.dataset.runUrl,
-                          )
-                        "
-                        title="Delete this scan"
-                        aria-label="Delete scan #{{ run.id }}"
-                      >
-                        <i class="fa-solid fa-trash"></i>
-                      </button>
+                    <td>
+                      <div style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">
+                        <a href="/run/{{ run.id }}" class="btn-view">
+                          View <i class="fa-solid fa-arrow-right" style="font-size:9px;"></i>
+                        </a>
+                        <button class="btn-del"
+                                onclick="openDeleteModal('{{ run.id }}','{{ run.target_url }}')"
+                                title="Delete scan">
+                          <i class="fa-solid fa-trash"></i>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {% endfor %}
                 </tbody>
               </table>
-              <div
-                id="dashboardPagination"
-                class="pagination-bar"
-                style="display: none"
-              >
-                <div class="pagination-info" id="dashPgInfo"></div>
-                <div class="pagination-btns" id="dashPgBtns"></div>
-              </div>
-              {% else %}
-              <div class="empty-state">
-                <i class="fa-solid fa-inbox"></i>
-                <h3>No scans yet</h3>
-                <p>Run your first scan to see results here.</p>
-              </div>
-              {% endif %}
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <!-- Delete Modal -->
-    <div id="deleteModal" class="delete-modal-overlay">
-      <div class="delete-modal-box">
-        <div class="delete-modal-icon">
-          <i class="fa-solid fa-trash-can"></i>
-        </div>
+            <!-- Pagination -->
+            <div class="pagination" id="paginationBar" style="display:none;">
+              <span id="pgInfoBottom" style="font-size:12px;color:var(--text-2);"></span>
+              <div class="pg-btns" id="pgBtns"></div>
+            </div>
+
+            {% else %}
+            <!-- Empty state -->
+            <div class="empty-state">
+              <div class="empty-icon"><i class="fa-solid fa-radar"></i></div>
+              <div class="empty-title">No scans yet</div>
+              <div class="empty-sub">Start your first QA scan to see comprehensive site health metrics and forensic reports.</div>
+              <a href="/new-scan" class="empty-cta"><i class="fa-solid fa-plus"></i> Start First Scan</a>
+            </div>
+            {% endif %}
+          </div>
+
+        </div><!-- /page-grid -->
+      </div><!-- /content -->
+    </div><!-- /main -->
+
+    <!-- ═══════════════════════════════════════════
+         DELETE MODAL
+    ═══════════════════════════════════════════ -->
+    <div id="deleteModal" class="modal-overlay">
+      <div class="modal">
+        <div class="modal-icon"><i class="fa-solid fa-trash-can"></i></div>
         <h3>Delete Scan?</h3>
-        <p>
-          This will permanently remove all data, reports, and page results for
-          this scan.
-        </p>
-        <span class="delete-modal-url" id="deleteModalUrl">—</span>
-        <div class="delete-modal-actions">
-          <button class="dm-cancel-btn" onclick="closeDeleteModal()">
-            Cancel
-          </button>
-          <button
-            class="dm-confirm-btn"
-            id="dmConfirmBtn"
-            onclick="confirmDeleteScan()"
-          >
+        <p>This permanently removes all data, screenshots, and reports. This cannot be undone.</p>
+        <span class="modal-url" id="deleteUrl">—</span>
+        <div class="modal-actions">
+          <button class="btn-cancel" onclick="closeDeleteModal()">Cancel</button>
+          <button class="btn-danger" id="btnConfirmDel" onclick="confirmDelete()">
             <i class="fa-solid fa-trash"></i> Delete Permanently
           </button>
         </div>
       </div>
     </div>
 
+    <!-- ═══════════════════════════════════════════
+         SCRIPTS
+    ═══════════════════════════════════════════ -->
     <script>
-      // Donut charts
-      document.querySelectorAll('[id^="donut-"]').forEach(function(canvas) {
-        var val = parseFloat(canvas.dataset.val) || 0;
-        var color = canvas.dataset.color || "#6366f1";
-        new Chart(canvas, {
-          type: "doughnut",
-          data: { datasets: [{ data: [val, 100 - val], backgroundColor: [color, "rgba(203,213,225,0.3)"], borderWidth: 0, borderRadius: 4 }] },
-          options: { responsive: false, cutout: "72%", plugins: { tooltip: { enabled: false } }, animation: { duration: 900, easing: "easeInOutCubic" } }
-        });
+    // ── Backend Data Injection ─────────────────────────────────────────────────
+    const TREND_LABELS     = {{ trend_labels     | tojson | safe if trend_labels     else '[]' }};
+    const TREND_HEALTH     = {{ trend_health     | tojson | safe if trend_health     else '[]' }};
+    const TREND_PERF       = {{ trend_perf       | tojson | safe if trend_perf       else '[]' }};
+    const TREND_CONFIDENCE = {{ trend_confidence | tojson | safe if trend_confidence else '[]' }};
+    const DIST_DATA        = [
+      {{ recent_runs | sum(attribute='excellent_pages')       | default(0) }},
+      {{ recent_runs | sum(attribute='good_pages')            | default(0) }},
+      {{ recent_runs | sum(attribute='needs_attention_pages') | default(0) }},
+      {{ recent_runs | sum(attribute='critical_pages')        | default(0) }}
+    ];
+
+    // ── Chart.js Global Config ────────────────────────────────────────────────
+    Chart.defaults.font.family = "'DM Sans', sans-serif";
+    Chart.defaults.color = '#8b949e';
+
+    // ── Donut Score Rings ──────────────────────────────────────────────────────
+    document.querySelectorAll('[id^="ring-"]').forEach(canvas => {
+      const val   = parseFloat(canvas.dataset.val) || 0;
+      const color = canvas.dataset.color || '#6366f1';
+      new Chart(canvas, {
+        type: 'doughnut',
+        data: {
+          datasets: [{
+            data: [val, 100 - val],
+            backgroundColor: [color, 'rgba(255,255,255,0.05)'],
+            borderWidth: 0,
+            borderRadius: 3,
+          }]
+        },
+        options: {
+          responsive: false,
+          cutout: '72%',
+          plugins: { tooltip: { enabled: false } },
+          animation: { duration: 900, easing: 'easeInOutCubic' }
+        }
       });
+    });
 
-      // Trend chart
-      var trendLabels = {{ trend_labels | safe | default('[]') }};
-      var trendHealth = {{ trend_health | safe | default('[]') }};
-      var trendPerf = {{ trend_perf | safe | default('[]') }};
-      var trendConfidence = {{ trend_confidence | safe | default('[]') }};
-
-      if (trendLabels.length > 0) {
-        new Chart(document.getElementById("trendChart"), {
-          type: "line",
-          data: {
-            labels: trendLabels,
-            datasets: [
-              { label: "Health", data: trendHealth, borderColor: "#6366f1", backgroundColor: "rgba(99,102,241,0.07)", tension: 0.4, fill: true, pointRadius: 3, pointHoverRadius: 5 },
-              { label: "Performance", data: trendPerf, borderColor: "#10b981", tension: 0.4, fill: false, borderDash: [4, 3], pointRadius: 3 },
-              { label: "Confidence", data: trendConfidence, borderColor: "#8b5cf6", tension: 0.4, fill: false, borderDash: [2, 4], borderWidth: 2, pointRadius: 3 }
-            ]
-          },
-          options: {
-            responsive: true, maintainAspectRatio: false,
-            scales: {
-              y: { min: 0, max: 100, grid: { color: "rgba(203,213,225,0.3)" }, ticks: { font: { size: 11 } } },
-              x: { grid: { display: false }, ticks: { font: { size: 11 } } }
+    // ── Trend Line Chart ───────────────────────────────────────────────────────
+    const trendCtx = document.getElementById('trendChart');
+    if (trendCtx && TREND_LABELS.length > 0) {
+      new Chart(trendCtx, {
+        type: 'line',
+        data: {
+          labels: TREND_LABELS,
+          datasets: [
+            {
+              label: 'Health',
+              data: TREND_HEALTH,
+              borderColor: '#6366f1',
+              backgroundColor: 'rgba(99,102,241,0.08)',
+              tension: 0.4,
+              fill: true,
+              pointRadius: 3,
+              pointHoverRadius: 5,
+              borderWidth: 2,
             },
-            plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 11 } } } }
-          }
-        });
-      }
-
-      // Distribution chart
-      var distChart = document.getElementById("distChart");
-      if (distChart) {
-        var distData = [
-          {{ recent_runs | sum(attribute='excellent_pages') | default(0) }},
-          {{ recent_runs | sum(attribute='good_pages') | default(0) }},
-          {{ recent_runs | sum(attribute='needs_attention_pages') | default(0) }},
-          {{ recent_runs | sum(attribute='critical_pages') | default(0) }}
-        ];
-        new Chart(distChart, {
-          type: "doughnut",
-          data: {
-            labels: ["Excellent", "Good", "Needs Attention", "Critical"],
-            datasets: [{ data: distData, backgroundColor: ["#10b981", "#6366f1", "#f59e0b", "#ef4444"], borderWidth: 0, borderRadius: 3 }]
-          },
-          options: {
-            responsive: true, maintainAspectRatio: false, cutout: "65%",
-            plugins: { legend: { position: "right", labels: { boxWidth: 10, font: { size: 11 } } } }
-          }
-        });
-      }
-
-      // Counter animation
-      document.querySelectorAll(".counter-num").forEach(function(el) {
-        var target = parseInt(el.textContent, 10);
-        if (isNaN(target) || target === 0) return;
-        el.textContent = "0";
-        var start = performance.now();
-        function tick(now) {
-          var p = Math.min((now - start) / 900, 1);
-          el.textContent = Math.round((1 - Math.pow(1 - p, 3)) * target);
-          if (p < 1) requestAnimationFrame(tick);
-        }
-        requestAnimationFrame(tick);
-      });
-
-      // ── Dashboard Table Pagination ─────────────────
-      (function() {
-        const tbody = document.getElementById('runsTableBody');
-        if (!tbody) return;
-        const PER_PAGE = 25;
-        let currentPage = 1;
-
-        function getRows() {
-          return Array.from(tbody.querySelectorAll('tr'));
-        }
-
-        function render() {
-          const rows = getRows();
-          if (rows.length <= PER_PAGE) return; // No pagination needed
-
-          const totalPages = Math.ceil(rows.length / PER_PAGE);
-          currentPage = Math.min(currentPage, totalPages);
-
-          rows.forEach((row, i) => {
-            const page = Math.floor(i / PER_PAGE) + 1;
-            row.style.display = page === currentPage ? '' : 'none';
-          });
-
-          const bar = document.getElementById('dashboardPagination');
-          const pgInfo = document.getElementById('dashPgInfo');
-          const pgBtns = document.getElementById('dashPgBtns');
-          bar.style.display = 'flex';
-
-          const start = (currentPage - 1) * PER_PAGE + 1;
-          const end = Math.min(currentPage * PER_PAGE, rows.length);
-          pgInfo.textContent = `Showing ${start}–${end} of ${rows.length} scans`;
-
-          pgBtns.innerHTML = '';
-          const prev = document.createElement('button');
-          prev.className = 'pg-btn';
-          prev.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
-          prev.disabled = currentPage === 1;
-          prev.onclick = () => { currentPage--; render(); };
-          pgBtns.appendChild(prev);
-
-          for (let p = 1; p <= totalPages; p++) {
-            const btn = document.createElement('button');
-            btn.className = 'pg-btn' + (p === currentPage ? ' active' : '');
-            btn.textContent = p;
-            btn.onclick = () => { currentPage = p; render(); };
-            pgBtns.appendChild(btn);
-          }
-
-          const next = document.createElement('button');
-          next.className = 'pg-btn';
-          next.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
-          next.disabled = currentPage === totalPages;
-          next.onclick = () => { currentPage++; render(); };
-          pgBtns.appendChild(next);
-        }
-
-        render();
-      })();
-
-      // ── Delete Scan ────────────────────────────────
-      let _deleteTargetId = null;
-
-      window.openDeleteModal = function(runId, runUrl) {
-        _deleteTargetId = runId;
-        document.getElementById('deleteModalUrl').textContent = runUrl || '—';
-        const btn = document.getElementById('dmConfirmBtn');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
-        document.getElementById('deleteModal').classList.add('open');
-        document.body.style.overflow = 'hidden';
-      };
-
-      function closeDeleteModal() {
-        document.getElementById('deleteModal').classList.remove('open');
-        document.body.style.overflow = '';
-        _deleteTargetId = null;
-      }
-
-      async function confirmDeleteScan() {
-        if (!_deleteTargetId) return;
-        const btn = document.getElementById('dmConfirmBtn');
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Deleting...';
-
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
-        try {
-          const res = await fetch(`/run/${_deleteTargetId}/delete`, {
-            method: 'POST',
-            headers: { 'X-CSRFToken': csrfToken },
-          });
-          if (res.ok) {
-            // Remove the row from the table without reload
-            const row = document.querySelector(`tr[data-run-id="${_deleteTargetId}"]`);
-            if (row) {
-              row.style.transition = 'opacity 0.3s, transform 0.3s';
-              row.style.opacity = '0';
-              row.style.transform = 'translateX(20px)';
-              setTimeout(() => row.remove(), 320);
+            {
+              label: 'Performance',
+              data: TREND_PERF,
+              borderColor: '#10b981',
+              tension: 0.4,
+              fill: false,
+              borderDash: [4, 3],
+              pointRadius: 3,
+              borderWidth: 1.5,
+            },
+            {
+              label: 'Confidence',
+              data: TREND_CONFIDENCE,
+              borderColor: '#8b5cf6',
+              tension: 0.4,
+              fill: false,
+              borderDash: [2, 4],
+              borderWidth: 1.5,
+              pointRadius: 3,
             }
-            closeDeleteModal();
-          } else {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
-            alert('Failed to delete scan. Please try again.');
-            closeDeleteModal();
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { intersect: false, mode: 'index' },
+          scales: {
+            y: {
+              min: 0, max: 100,
+              grid: { color: 'rgba(255,255,255,0.04)' },
+              ticks: { font: { size: 10 }, stepSize: 20 }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { font: { size: 10 } }
+            }
+          },
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 16 } },
+            tooltip: {
+              backgroundColor: '#0d1117',
+              borderColor: 'rgba(255,255,255,0.07)',
+              borderWidth: 1,
+              padding: 10,
+              titleFont: { size: 12 },
+              bodyFont: { size: 11 },
+            }
           }
-        } catch (err) {
+        }
+      });
+    }
+
+    // ── Distribution Donut ────────────────────────────────────────────────────
+    const distCtx = document.getElementById('distChart');
+    if (distCtx && DIST_DATA.reduce((a,b)=>a+b,0) > 0) {
+      new Chart(distCtx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Excellent', 'Good', 'Needs Attention', 'Critical'],
+          datasets: [{
+            data: DIST_DATA,
+            backgroundColor: [
+              'rgba(16,185,129,0.8)',
+              'rgba(99,102,241,0.8)',
+              'rgba(245,158,11,0.8)',
+              'rgba(244,63,94,0.8)'
+            ],
+            borderWidth: 0,
+            borderRadius: 2,
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '62%',
+          plugins: {
+            legend: {
+              position: 'right',
+              labels: { boxWidth: 9, font: { size: 11 }, padding: 12 }
+            },
+            tooltip: {
+              backgroundColor: '#0d1117',
+              borderColor: 'rgba(255,255,255,0.07)',
+              borderWidth: 1,
+            }
+          }
+        }
+      });
+    }
+
+    // ── Animated Counters ──────────────────────────────────────────────────────
+    function animateCounter(el) {
+      const target = parseInt(el.dataset.target, 10);
+      if (isNaN(target) || target === 0) return;
+      const start = performance.now();
+      const dur = 900;
+      const startVal = 0;
+
+      function tick(now) {
+        const t = Math.min((now - start) / dur, 1);
+        const ease = 1 - Math.pow(1 - t, 3);
+        el.textContent = Math.round(startVal + (target - startVal) * ease);
+        if (t < 1) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('.counter').forEach(animateCounter);
+    });
+
+    // ── Table Pagination ──────────────────────────────────────────────────────
+    (function initPagination() {
+      const tbody = document.getElementById('runsBody');
+      if (!tbody) return;
+      const PER = 20;
+      let page = 1;
+
+      function render() {
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        if (rows.length <= PER) return;
+
+        const total = rows.length;
+        const totalPgs = Math.ceil(total / PER);
+        page = Math.min(page, totalPgs);
+
+        rows.forEach((r, i) => {
+          const pg = Math.floor(i / PER) + 1;
+          r.style.display = pg === page ? '' : 'none';
+        });
+
+        const bar = document.getElementById('paginationBar');
+        bar.style.display = 'flex';
+
+        const start = (page - 1) * PER + 1;
+        const end = Math.min(page * PER, total);
+        document.getElementById('pgInfoBottom').textContent = `Showing ${start}–${end} of ${total} scans`;
+
+        const btns = document.getElementById('pgBtns');
+        btns.innerHTML = '';
+
+        const prev = document.createElement('button');
+        prev.className = 'pg-btn'; prev.innerHTML = '<i class="fa-solid fa-chevron-left" style="font-size:10px;"></i>';
+        prev.disabled = page === 1;
+        prev.onclick = () => { page--; render(); };
+        btns.appendChild(prev);
+
+        for (let p = 1; p <= totalPgs; p++) {
+          const b = document.createElement('button');
+          b.className = 'pg-btn' + (p === page ? ' active' : '');
+          b.textContent = p;
+          b.onclick = () => { page = p; render(); };
+          btns.appendChild(b);
+        }
+
+        const next = document.createElement('button');
+        next.className = 'pg-btn'; next.innerHTML = '<i class="fa-solid fa-chevron-right" style="font-size:10px;"></i>';
+        next.disabled = page === totalPgs;
+        next.onclick = () => { page++; render(); };
+        btns.appendChild(next);
+      }
+
+      render();
+    })();
+
+    // ── Delete Modal ──────────────────────────────────────────────────────────
+    let _deleteId = null;
+
+    function openDeleteModal(id, url) {
+      _deleteId = id;
+      document.getElementById('deleteUrl').textContent = url || '—';
+      const btn = document.getElementById('btnConfirmDel');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
+      document.getElementById('deleteModal').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function closeDeleteModal() {
+      document.getElementById('deleteModal').classList.remove('open');
+      document.body.style.overflow = '';
+      _deleteId = null;
+    }
+
+    async function confirmDelete() {
+      if (!_deleteId) return;
+      const btn = document.getElementById('btnConfirmDel');
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Deleting…';
+
+      const csrf = document.querySelector('meta[name="csrf-token"]').content;
+      try {
+        const res = await fetch(`/run/${_deleteId}/delete`, {
+          method: 'POST', headers: { 'X-CSRFToken': csrf }
+        });
+        if (res.ok) {
+          const row = document.querySelector(`tr[data-run-id="${_deleteId}"]`);
+          if (row) {
+            row.style.transition = 'opacity 0.3s, transform 0.3s';
+            row.style.opacity = '0';
+            row.style.transform = 'translateX(20px)';
+            setTimeout(() => row.remove(), 320);
+          }
+          closeDeleteModal();
+        } else {
           btn.disabled = false;
           btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
-          alert('Network error. Please check your connection.');
+          alert('Delete failed. Please try again.');
           closeDeleteModal();
         }
+      } catch {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-trash"></i> Delete Permanently';
+        alert('Network error.');
+        closeDeleteModal();
       }
+    }
 
-      document.getElementById('deleteModal').addEventListener('click', function(e) {
-        if (e.target === this) closeDeleteModal();
-      });
+    // Close modal on backdrop click
+    document.getElementById('deleteModal').addEventListener('click', function(e) {
+      if (e.target === this) closeDeleteModal();
+    });
     </script>
   </body>
 </html>

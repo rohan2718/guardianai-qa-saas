@@ -874,6 +874,40 @@ def _persist_page_results(run_id: int, pages: list):
             logger.error(f"Bulk save failed for run {run_id}: {e}", exc_info=True)
 
 
+
+def _derive_grade(score) -> str:
+    if score is None:
+        return "N/A"
+    s = float(score)
+    if s >= 90: return "Excellent"
+    if s >= 80: return "Good"
+    if s >= 70: return "Needs Improvement"
+    if s >= 60: return "Poor"
+    return "Critical"
+
+def _build_seo_jsonb(seo_raw: dict) -> dict | None:
+    if not seo_raw or seo_raw.get("_error"):
+        return None
+
+    score = (
+        seo_raw.get("score")
+        or seo_raw.get("seo_score")
+    )
+    grade = (
+        seo_raw.get("grade")
+        or seo_raw.get("seo_grade")
+        or _derive_grade(score)
+    )
+    # Safety: never exceed DB column width
+    grade = str(grade)[:30] if grade else "N/A"
+
+    return {
+        **seo_raw,
+        "score":     score,
+        "grade":     grade,
+        "seo_score": score,
+        "seo_grade": grade,
+    }
 def _run_ai_summary_with_timeout(page_data: list, timeout: int = AI_SUMMARY_TIMEOUT) -> str:
     from ai_analyzer import analyze_site, basic_summary
 

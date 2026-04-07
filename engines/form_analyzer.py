@@ -1,6 +1,12 @@
 """
-Form Validation Analyzer Engine — GuardianAI
+engines/form_analyzer.py — GuardianAI Form Validation Analyzer Engine
 Performs deep form health analysis from DOM data collected by the crawler.
+
+FIX: analyze_form() now returns has_issues flag required by:
+     - scoring_engine.compute_ui_form_score()
+     - kpi_engine.compute_ui_form_kpi()
+     Both check f.get("has_issues") to count broken forms. Without this
+     flag, form issues were silently ignored and UI/Form score was always 100.
 """
 
 
@@ -9,7 +15,8 @@ def analyze_form(form_raw: dict) -> dict:
     Takes raw form data from Playwright crawl and produces:
     - form_health_score (0–100)
     - form_issue_count
-    - per-field issues
+    - form_issues
+    - has_issues (bool) ← FIX: previously missing, broke downstream scoring
     """
     issues = []
     fields = form_raw.get("fields") or []
@@ -19,93 +26,91 @@ def analyze_form(form_raw: dict) -> dict:
         return {
             **form_raw,
             "form_health_score": None,
-            "form_issue_count": 0,
-            "form_issues": [],
+            "form_issue_count":  0,
+            "form_issues":       [],
+            "has_issues":        False,   # ← FIX
         }
 
-    # ── 1. Submit button exists? ──
+    # ── 1. Submit button exists? ──────────────────────────────────────────────
     has_submit = any(
         f.get("type") in ("submit", "button") or f.get("tag") == "button"
         for f in fields
     )
     if not has_submit:
-        # Check if action implies JS submit
         action = form_raw.get("action", "")
         if not action:
             issues.append({
-                "type": "missing_submit",
+                "type":     "missing_submit",
                 "severity": "medium",
-                "detail": "Form has no visible submit button"
+                "detail":   "Form has no visible submit button"
             })
 
-    # ── 2. Required field detection ──
+    # ── 2. Required field detection ───────────────────────────────────────────
     for field in fields:
         field_type = field.get("type") or ""
         field_name = field.get("name") or ""
-        field_tag = field.get("tag") or "input"
+        field_tag  = field.get("tag") or "input"
 
-        # Skip non-interactive
         if field_type in ("hidden", "submit", "button", "reset"):
             continue
 
-        # Email fields — type should be 'email'
         name_lower = field_name.lower()
+
+        # Email fields — type should be 'email'
         if any(kw in name_lower for kw in ["email", "e-mail", "mail"]):
             if field_type != "email":
                 issues.append({
-                    "type": "wrong_input_type",
+                    "type":     "wrong_input_type",
                     "severity": "medium",
-                    "field": field_name,
-                    "detail": f"Field '{field_name}' appears to be email but uses type='{field_type}'"
+                    "field":    field_name,
+                    "detail":   f"Field '{field_name}' appears to be email but uses type='{field_type}'"
                 })
 
         # Phone fields
         if any(kw in name_lower for kw in ["phone", "tel", "mobile"]):
             if field_type not in ("tel", "text"):
                 issues.append({
-                    "type": "wrong_input_type",
+                    "type":     "wrong_input_type",
                     "severity": "low",
-                    "field": field_name,
-                    "detail": f"Field '{field_name}' appears to be phone but uses type='{field_type}'"
+                    "field":    field_name,
+                    "detail":   f"Field '{field_name}' appears to be phone but uses type='{field_type}'"
                 })
 
         # Number fields
         if any(kw in name_lower for kw in ["age", "quantity", "qty", "count", "number", "amount"]):
             if field_type not in ("number", "text"):
                 issues.append({
-                    "type": "wrong_input_type",
+                    "type":     "wrong_input_type",
                     "severity": "low",
-                    "field": field_name,
-                    "detail": f"Field '{field_name}' should use type='number'"
+                    "field":    field_name,
+                    "detail":   f"Field '{field_name}' should use type='number'"
                 })
 
-        # Placeholder-only labeling (no real label detected)
-        # This is inferred by field name — we flag unnamed fields
+        # Unnamed fields
         if not field_name and field_tag not in ("button", "select"):
             issues.append({
-                "type": "missing_name",
+                "type":     "missing_name",
                 "severity": "medium",
-                "field": field_name or "(unnamed)",
-                "detail": "Input field has no 'name' attribute — form submission will lose this value"
+                "field":    field_name or "(unnamed)",
+                "detail":   "Input field has no 'name' attribute — form submission will lose this value"
             })
 
-    # ── 3. Method check ──
+    # ── 3. Method check ───────────────────────────────────────────────────────
     method = (form_raw.get("method") or "GET").upper()
     if method == "GET" and field_count > 2:
-        # Check if any field looks like sensitive data
         sensitive_names = [(f.get("name") or "").lower() for f in fields]
         if any(kw in n for kw in ["password", "passwd", "secret", "token", "card"] for n in sensitive_names):
             issues.append({
-                "type": "sensitive_get_form",
+                "type":     "sensitive_get_form",
                 "severity": "high",
-                "detail": "Form with apparent sensitive data uses GET method — data visible in URL"
+                "detail":   "Form with apparent sensitive data uses GET method — data visible in URL"
             })
 
-    # ── 4. Score ──
+    # ── 4. Score ──────────────────────────────────────────────────────────────
     deductions = {
-        "high": 20.0,
+        "high":   20.0,
         "medium": 10.0,
-        "low": 4.0
+        "low":    4.0,
     }
 
     score = 100.0
@@ -118,8 +123,9 @@ def analyze_form(form_raw: dict) -> dict:
     return {
         **form_raw,
         "form_health_score": round(score, 1),
-        "form_issue_count": len(issues),
-        "form_issues": issues,
+        "form_issue_count":  len(issues),
+        "form_issues":       issues,
+        "has_issues":        len(issues) > 0,   # ← FIX: enables correct scoring
     }
 
 

@@ -4096,11 +4096,6 @@
                                 {% set _seo = item.seo_data if item.seo_data is defined and item.seo_data else {} %}
                               
                                 {# TEMP DEBUG — remove this <pre> block after confirming data flows #}
-                                <details style="margin-bottom:14px;">
-                                  <summary style="font-size:11px;color:#94a3b8;cursor:pointer;">Debug: raw SEO JSON</summary>
-                                  <pre style="font-size:10px;color:#475569;background:#f1f5f9;padding:10px;border-radius:6px;overflow:auto;max-height:180px;">{{ _seo | tojson(indent=2) if _seo else "NO SEO DATA — check tasks.py persistence and DB column seo_data" }}</pre>
-                                </details>
-                              
                                 {% if _seo and _seo.keys() | list | length > 0 %}
                               
                                   {# ── SEO Grade Banner ── #}

@@ -67,6 +67,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+app.jinja_env.globals['_scans_today'] = lambda u: _scans_today(u)
+
+
 # Single source of truth — config.py already validated this is non-empty
 app.config["SECRET_KEY"]                  = config.SECRET_KEY
 app.config["SQLALCHEMY_DATABASE_URI"]     = config.DB_URL
@@ -1599,6 +1602,7 @@ def dashboard():
         trend_confidence=json.dumps(trend_confidence),
         plan=current_user.plan,
         plan_limits=_plan_limits(current_user),
+        scans_today=_scans_today(current_user),
     )
 
 
